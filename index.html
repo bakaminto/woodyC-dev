@@ -97,6 +97,33 @@
       justify-content: center;
       box-sizing: border-box;
     }
+
+    .cal-vertical-grid {
+      display: grid;
+      row-gap: 8px;
+      column-gap: 4px;
+      align-items: stretch;
+      width: 100%;
+    }
+
+    .cal-day-badge {
+      width: 72px;
+      height: 80px;
+      min-width: 0;
+      box-sizing: border-box;
+    }
+
+    .cal-day-inner {
+      width: 64px;
+      height: 58px;
+      box-sizing: border-box;
+    }
+
+    .cal-strip-pill {
+      min-width: 0;
+      z-index: 10;
+      box-sizing: border-box;
+    }
   </style>
 </head>
 
@@ -214,11 +241,10 @@
       </div>
     </section>
 
-    <!-- VIEW 1C: CALENDAR VIEW (5-COLUMN CONTINUOUS ROLLING GRID) -->
+    <!-- VIEW 1C: CALENDAR VIEW (VERTICAL DATE STRIP + PARALLEL EVENT LANES) -->
     <section id="viewCalendar" class="hidden pb-[calc(106px+env(safe-area-inset-bottom,0px))] max-w-md mx-auto w-full">
-      <div class="flex flex-col w-full">
-        <!-- 5 Columns Continuous Rolling Grid -->
-        <div class="grid grid-cols-5 gap-2.5 w-full" id="calendarRollingGrid"></div>
+      <div class="w-full overflow-x-auto no-scrollbar">
+        <div class="cal-vertical-grid" id="calendarRollingGrid"></div>
       </div>
     </section>
 
@@ -514,7 +540,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.2";
+    const APP_VERSION = "C01.3";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -1040,18 +1066,16 @@
           requestAnimationFrame(() => scrollTimelineToDate(selectedDate, false));
         } else if (viewName === "calendar") {
           if (prevView === "grid" || prevView === "list") {
-            const todayKey = formatDateInputValue(getTodayAnchor());
-            const selKey = formatDateInputValue(selectedDate);
-            calendarSelectedDateKey = selKey !== todayKey ? selKey : null;
+            calendarSelectedDateKey = null;
           }
           tabMonth.className = "w-[92px] h-12 rounded-xl font-bold bg-white text-[#b80000] shadow-sm transition-all cursor-pointer flex flex-col items-center justify-center whitespace-nowrap";
           updateHeaderCenterBadge();
           document.getElementById("viewCalendar").classList.remove("hidden");
           renderCalendarView();
-          renderCalendarEventFooter(true);
+          renderCalendarEventFooter("center");
           scrollCalendarToDate(selectedDate, false);
           requestAnimationFrame(() => {
-            renderCalendarEventFooter(true);
+            renderCalendarEventFooter("center");
             scrollCalendarToDate(selectedDate, false);
           });
         }
@@ -3258,6 +3282,90 @@
       }
     }
 
+    function isEventOverdueOnDate(store, eventId, refDateKey, todayKey) {
+      if (!store || !eventId || !refDateKey || !todayKey) return false;
+      const evBookings = getBookingsForEvent(store, eventId);
+      if (evBookings.length === 0) return false;
+      const devMap = new Map((store.devices || []).map(d => [d.id, d]));
+      return evBookings.some(bk => {
+        if (!bk || !bk.device_id) return false;
+        const dev = devMap.get(bk.device_id);
+        if (!dev) return false;
+        const { state, booking } = getDeviceViewStateOnDate(store, dev, refDateKey, todayKey);
+        return state === "overdue" && booking && booking.event_id === eventId;
+      });
+    }
+
+    function getEventDurationDays(ev) {
+      if (!ev || !ev.out_date || !ev.due_date) return 0;
+      const outDt = parseDateKey(ev.out_date);
+      const dueDt = parseDateKey(ev.due_date);
+      if (!outDt || !dueDt) return 0;
+      return Math.max(0, diffCalendarDaysLocal(dueDt, outDt) + 1);
+    }
+
+    function compareEventsListOrder(store, a, b, overdueSet = null) {
+      const aDue = overdueSet ? overdueSet.has(a.id) : false;
+      const bDue = overdueSet ? overdueSet.has(b.id) : false;
+      if (aDue !== bDue) return aDue ? -1 : 1;
+
+      const custA = getEventCustomerName(store, a) || "Unspecified Customer";
+      const custB = getEventCustomerName(store, b) || "Unspecified Customer";
+      const cmpCust = custA.localeCompare(custB, undefined, { sensitivity: "base" }) || custA.localeCompare(custB);
+      if (cmpCust !== 0) return cmpCust;
+
+      const cmpOut = (a.out_date || "").localeCompare(b.out_date || "");
+      if (cmpOut !== 0) return cmpOut;
+
+      const cmpDue = (a.due_date || "").localeCompare(b.due_date || "");
+      if (cmpDue !== 0) return cmpDue;
+
+      const nameA = (a.name || "").trim() || "No event";
+      const nameB = (b.name || "").trim() || "No event";
+      return nameA.localeCompare(nameB, undefined, { sensitivity: "base" }) || nameA.localeCompare(nameB);
+    }
+
+    function compareCalendarEventsStripOrder(store, a, b, overdueSet = null) {
+      const durDiff = getEventDurationDays(b) - getEventDurationDays(a);
+      if (durDiff !== 0) return durDiff;
+      return compareEventsListOrder(store, a, b, overdueSet);
+    }
+
+    function getCalendarOverdueEventSet(store, events, refDateKey, todayKey) {
+      const dueIds = new Set();
+      (events || []).forEach(ev => {
+        if (ev && ev.id && isEventOverdueOnDate(store, ev.id, refDateKey, todayKey)) {
+          dueIds.add(ev.id);
+        }
+      });
+      return dueIds;
+    }
+
+    function assignCalendarEventLanes(sortedEvents) {
+      const laneIntervals = [];
+      const placed = [];
+      (sortedEvents || []).forEach(ev => {
+        if (!ev || !ev.out_date || !ev.due_date) return;
+        let laneIdx = -1;
+        for (let i = 0; i < laneIntervals.length; i++) {
+          const overlaps = laneIntervals[i].some(
+            item => item.out_date <= ev.due_date && ev.out_date <= item.due_date
+          );
+          if (!overlaps) {
+            laneIdx = i;
+            break;
+          }
+        }
+        if (laneIdx === -1) {
+          laneIdx = laneIntervals.length;
+          laneIntervals.push([]);
+        }
+        laneIntervals[laneIdx].push({ out_date: ev.out_date, due_date: ev.due_date });
+        placed.push({ ev, laneIdx });
+      });
+      return { placed, usedLanes: laneIntervals.length };
+    }
+
     function handleMonthBadgeClick() {
       if (currentView === "calendar") {
         calendarSelectedDateKey = null;
@@ -3265,10 +3373,10 @@
         selectedDate = getTodayAnchor();
         updateTimelineFooter();
         renderCalendarView();
-        renderCalendarEventFooter(true);
+        renderCalendarEventFooter("center");
         scrollCalendarToDate(selectedDate, false);
         requestAnimationFrame(() => {
-          renderCalendarEventFooter(true);
+          renderCalendarEventFooter("center");
           scrollCalendarToDate(selectedDate, false);
         });
       } else {
@@ -3285,9 +3393,17 @@
       } else {
         calendarSelectedDateKey = dateKey;
         selectedDate = new Date(cellDate.getFullYear(), cellDate.getMonth(), cellDate.getDate());
+        if (calendarSelectedEventId) {
+          const activeEv = findEventById(globalStore, calendarSelectedEventId);
+          if (!activeEv || !activeEv.out_date || !activeEv.due_date || activeEv.out_date > dateKey || dateKey > activeEv.due_date) {
+            calendarSelectedEventId = null;
+          }
+        }
       }
-      updateTimelineFooter();
+      updateTimelineFooter({ skipScroll: true });
+      renderHeaderCalendarBadge(cellDate.getFullYear(), cellDate.getMonth());
       renderCalendarView();
+      renderCalendarEventFooter(calendarSelectedDateKey ? "start" : "center");
     }
 
     function handleCalendarEventChipClick(evId) {
@@ -3298,10 +3414,13 @@
         return;
       }
       calendarSelectedEventId = evId;
+      const ev = findEventById(globalStore, evId);
+      if (calendarSelectedDateKey && ev && (ev.out_date > calendarSelectedDateKey || calendarSelectedDateKey > ev.due_date)) {
+        calendarSelectedDateKey = null;
+      }
       renderCalendarView();
       renderCalendarEventFooter("intoView");
-      const ev = findEventById(globalStore, evId);
-      if (ev && ev.out_date) {
+      if (!calendarSelectedDateKey && ev && ev.out_date) {
         const outDt = parseDateKey(ev.out_date);
         if (outDt) {
           renderHeaderCalendarBadge(outDt.getFullYear(), outDt.getMonth());
@@ -3320,29 +3439,42 @@
       const prevScrollLeft = track.scrollLeft || 0;
       track.innerHTML = "";
 
-      const events = (globalStore && Array.isArray(globalStore.events)) ? globalStore.events.slice() : [];
-      events.sort((a, b) => {
-        const cmpOut = (a.out_date || "").localeCompare(b.out_date || "");
-        if (cmpOut !== 0) return cmpOut;
-        const cmpDue = (a.due_date || "").localeCompare(b.due_date || "");
-        if (cmpDue !== 0) return cmpDue;
-        const custA = getEventCustomerName(globalStore, a);
-        const custB = getEventCustomerName(globalStore, b);
-        const cmpCust = custA.localeCompare(custB, undefined, { sensitivity: "base" }) || custA.localeCompare(custB);
-        if (cmpCust !== 0) return cmpCust;
-        return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }) || (a.name || "").localeCompare(b.name || "");
-      });
+      const todayKey = formatDateInputValue(getTodayAnchor());
+      const allEvents = (globalStore && Array.isArray(globalStore.events)) ? globalStore.events.slice() : [];
+      const isDayFiltered = Boolean(calendarSelectedDateKey);
+
+      let events = allEvents;
+      if (isDayFiltered) {
+        const overdueSet = getCalendarOverdueEventSet(globalStore, allEvents, calendarSelectedDateKey, todayKey);
+        events = allEvents
+          .filter(ev => ev && ev.out_date && ev.due_date && ev.out_date <= calendarSelectedDateKey && calendarSelectedDateKey <= ev.due_date)
+          .sort((a, b) => compareCalendarEventsStripOrder(globalStore, a, b, overdueSet));
+      } else {
+        events.sort((a, b) => {
+          const cmpOut = (a.out_date || "").localeCompare(b.out_date || "");
+          if (cmpOut !== 0) return cmpOut;
+          const cmpDue = (a.due_date || "").localeCompare(b.due_date || "");
+          if (cmpDue !== 0) return cmpDue;
+          const custA = getEventCustomerName(globalStore, a);
+          const custB = getEventCustomerName(globalStore, b);
+          const cmpCust = custA.localeCompare(custB, undefined, { sensitivity: "base" }) || custA.localeCompare(custB);
+          if (cmpCust !== 0) return cmpCust;
+          return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }) || (a.name || "").localeCompare(b.name || "");
+        });
+      }
 
       if (calendarSelectedEventId && !events.some(ev => ev.id === calendarSelectedEventId)) {
         calendarSelectedEventId = null;
       }
 
       if (events.length === 0) {
-        track.innerHTML = `<div class="w-full text-center text-xs text-[#916f69] font-medium">No events scheduled</div>`;
+        const emptyText = isDayFiltered
+          ? `No events on ${formatShortMmDd(calendarSelectedDateKey)}`
+          : "No events scheduled";
+        track.innerHTML = `<div class="w-full text-center text-xs text-[#916f69] font-medium">${emptyText}</div>`;
         return;
       }
 
-      const todayKey = formatDateInputValue(getTodayAnchor());
       let centerEvent = events.find(ev => ev.out_date && ev.due_date && ev.out_date <= todayKey && todayKey <= ev.due_date);
       if (!centerEvent) {
         centerEvent = events.find(ev => ev.due_date && ev.due_date >= todayKey) || events[events.length - 1];
@@ -3393,7 +3525,13 @@
         }
       });
 
-      if (scrollMode === "center" && centerChipEl && typeof track.scrollLeft === "number") {
+      if (scrollMode === "start" && typeof track.scrollLeft === "number") {
+        if (typeof track.scrollTo === "function") {
+          track.scrollTo({ left: 0, behavior: "auto" });
+        } else {
+          track.scrollLeft = 0;
+        }
+      } else if (scrollMode === "center" && centerChipEl && typeof track.scrollLeft === "number") {
         const clientW = track.clientWidth || 0;
         const offsetW = centerChipEl.offsetWidth || 0;
         const offsetL = centerChipEl.offsetLeft || 0;
@@ -3902,13 +4040,13 @@
       return byDay;
     }
 
-    // Render Continuous 5-Column Rolling Calendar Grid (2-Row Style)
+    // Render Vertical Date Strip + Parallel Vertical Event Strips
     function renderCalendarView() {
       const container = document.getElementById("calendarRollingGrid");
       if (!container) return;
       container.innerHTML = "";
 
-      const { today, todayKey, startDate, totalRows, startKey, endKey } = getRollingDateRange();
+      const { today, todayKey, startDate, totalDays, startKey, endKey } = getRollingDateRange();
       const devicesList = (globalStore && Array.isArray(globalStore.devices)) ? globalStore.devices : [];
       const allDeviceIdSet = new Set(devicesList.map(d => d && d.id).filter(Boolean));
       const lzAllIds = new Set();
@@ -3941,114 +4079,151 @@
         return { outCount: typeOutCount, officeCount: typeOfficeCount };
       };
 
-      const activeEvent = calendarSelectedEventId ? findEventById(globalStore, calendarSelectedEventId) : null;
       const outSetsByDay = buildCalendarOutSetsByDay(globalStore, startKey, endKey, todayKey, allDeviceIdSet);
 
-      for (let row = 0; row < totalRows; row++) {
-        for (let col = 0; col < CALENDAR_COLS; col++) {
-          const dayOffset = (row * CALENDAR_COLS) + col;
-          const cellDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + dayOffset);
-          const isToday = isSameDate(cellDate, today);
-          const dateKey = formatDateInputValue(cellDate);
+      const allEvents = (globalStore && Array.isArray(globalStore.events)) ? globalStore.events.slice() : [];
+      const overdueEventSet = getCalendarOverdueEventSet(globalStore, allEvents, todayKey, todayKey);
+      const sortedEvents = allEvents
+        .filter(ev => ev && ev.out_date && ev.due_date && ev.due_date >= ev.out_date)
+        .sort((a, b) => compareCalendarEventsStripOrder(globalStore, a, b, overdueEventSet));
+      const { placed, usedLanes } = assignCalendarEventLanes(sortedEvents);
+      const laneCount = Math.max(6, usedLanes);
 
-          const outSet = outSetsByDay.get(dateKey);
-          const totalOutCount = outSet ? outSet.size : 0;
-          const isPastDate = cellDate.getTime() < today.getTime();
-          const isSettledPastLook = isPastDate && totalOutCount === 0;
-          const isSelectedDay = calendarSelectedDateKey === dateKey;
-          const isEventDay = Boolean(
-            activeEvent && activeEvent.out_date && activeEvent.due_date &&
-            activeEvent.out_date <= dateKey && dateKey <= activeEvent.due_date
-          );
+      container.style.gridTemplateColumns = laneCount > 10
+        ? `72px repeat(${laneCount}, minmax(28px, 1fr))`
+        : `72px repeat(${laneCount}, minmax(0, 1fr))`;
+      container.style.columnGap = laneCount >= 8 ? "3px" : "4px";
+      container.style.gridAutoRows = "80px";
 
-          const lzInfo = getTypeDayInfo(outSet, lzAllIds, lzActiveIds);
-          const llInfo = getTypeDayInfo(outSet, llAllIds, llActiveIds);
-          const lzGrey = isSettledPastLook || (lzInfo.outCount === 0 && lzInfo.officeCount === 0);
-          const llGrey = isSettledPastLook || (llInfo.outCount === 0 && llInfo.officeCount === 0);
-          const lzSeg = getMergedSegmentCounts(lzInfo.outCount, lzInfo.officeCount);
-          const llSeg = getMergedSegmentCounts(llInfo.outCount, llInfo.officeCount);
+      const frag = document.createDocumentFragment();
 
-          // All days stay touchable; tapping toggles single-day selection on Calendar without leaving Calendar
-          const cell = document.createElement("button");
-          cell.type = "button";
-          cell.onclick = () => handleCalendarDayClick(cellDate, dateKey);
-          cell.id = `cal_day_${dateKey}`;
-          cell.dataset.calDate = dateKey;
-          cell.className = "relative group w-full h-[58px] cursor-pointer select-none focus:outline-none";
+      for (let dayIdx = 0; dayIdx < totalDays; dayIdx++) {
+        const cellDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + dayIdx);
+        const isToday = isSameDate(cellDate, today);
+        const dateKey = formatDateInputValue(cellDate);
+        const dayName = DAY_NAMES[(cellDate.getDay() + 6) % 7];
 
-          let haloHtml = "";
-          if (isEventDay) {
-            const prevKey = addDaysToDateKey(dateKey, -1);
-            const nextKey = addDaysToDateKey(dateKey, 1);
-            const hasPrevSameRow = col > 0 && Boolean(prevKey && activeEvent.out_date <= prevKey && prevKey <= activeEvent.due_date);
-            const hasNextSameRow = col < (CALENDAR_COLS - 1) && Boolean(nextKey && activeEvent.out_date <= nextKey && nextKey <= activeEvent.due_date);
-            haloHtml = buildEventHaloHtml(hasPrevSameRow, hasNextSameRow);
-          }
+        const outSet = outSetsByDay.get(dateKey);
+        const totalOutCount = outSet ? outSet.size : 0;
+        const isPastDate = cellDate.getTime() < today.getTime();
+        const isSettledPastLook = isPastDate && totalOutCount === 0;
+        const isSelectedDay = calendarSelectedDateKey === dateKey;
 
-          let innerCardClass = "";
-          if (isSettledPastLook) {
-            const pastBorderClass = isSelectedDay ? "border-[6px] border-[#b80000]" : "border-2 border-dashed border-[#9e9e9e]";
-            innerCardClass = `relative z-10 flex flex-col items-center justify-center w-full h-full rounded-2xl overflow-hidden bg-[#fbf9f9] ${pastBorderClass} text-[#9e9e9e] hover:bg-[#f0efef] group-active:scale-95 transition-all`;
-          } else {
-            const isEvenMonth = cellDate.getMonth() % 2 === 0;
-            const bgClass = isEvenMonth ? "bg-[#f5f4f4]" : "bg-[#eae8e8]";
-            const borderClass = isSelectedDay
-              ? "border-[6px] border-[#b80000]"
-              : (isEvenMonth ? "border border-[#e3e1e1]" : "border border-[#dad8d8]");
-            innerCardClass = `relative z-10 flex flex-col items-center justify-center w-full h-full rounded-2xl overflow-hidden ${borderClass} ${bgClass} shadow-xs group-active:scale-95 transition-all`;
-          }
+        const lzInfo = getTypeDayInfo(outSet, lzAllIds, lzActiveIds);
+        const llInfo = getTypeDayInfo(outSet, llAllIds, llActiveIds);
+        const lzGrey = isSettledPastLook || (lzInfo.outCount === 0 && lzInfo.officeCount === 0);
+        const llGrey = isSettledPastLook || (llInfo.outCount === 0 && llInfo.officeCount === 0);
+        const lzSeg = getMergedSegmentCounts(lzInfo.outCount, lzInfo.officeCount);
+        const llSeg = getMergedSegmentCounts(llInfo.outCount, llInfo.officeCount);
 
-          // Date formatting: first of month carries month number in mm/dd format (e.g. "11/01"), other dates use 2-digit day (e.g. "03")
-          const isFirstOfMonth = (cellDate.getDate() === 1);
-          const dPad = cellDate.getDate() < 10 ? `0${cellDate.getDate()}` : `${cellDate.getDate()}`;
-          let dateDisplay = dPad;
-          let pillWidthClass = "w-11";
-
-          if (isFirstOfMonth) {
-            const m = cellDate.getMonth() + 1;
-            const mPad = m < 10 ? `0${m}` : `${m}`;
-            dateDisplay = `${mPad}/${dPad}`;
-            pillWidthClass = "px-1.5 min-w-11";
-          }
-
-          // Upper Row: Date display (capsule pill matching status bar width, widened if first of month; red pill stays anchored on today)
-          const dateTextColor = isSettledPastLook ? "text-[#9e9e9e]" : "text-[#1b1c1c]";
-          let datePillClass = `${pillWidthClass} h-[22px] flex items-center justify-center text-sm font-bold leading-none ${dateTextColor} text-center select-none`;
-          if (isToday) {
-            datePillClass = `${pillWidthClass} h-[22px] rounded-full bg-[#b80000] text-white shadow-xs flex items-center justify-center text-sm font-bold leading-none text-center select-none`;
-          }
-
-          cell.innerHTML = `
-            ${haloHtml}
-            <div class="${innerCardClass}">
-              <!-- Upper Row: Date Number (Bold, mm/dd on 1st of month, pill-shaped red highlight) -->
-              <div class="flex items-center justify-center w-full h-[22px]">
-                <span class="${datePillClass}">
-                  ${dateDisplay}
-                </span>
-              </div>
-
-              <!-- Bottom Row: Dual Stacked Status Pills (Upper = LZ, Lower = LL) -->
-              <div class="flex flex-col items-center justify-center w-full mt-1 gap-[2px]">
-                ${renderSegmentedBarHtml(lzSeg.yellowSegments, lzSeg.greenSegments, lzGrey, "h-1.5")}
-                ${renderSegmentedBarHtml(llSeg.yellowSegments, llSeg.greenSegments, llGrey, "h-1.5")}
-              </div>
-            </div>
-          `;
-
-          container.appendChild(cell);
+        if (isToday || isSelectedDay) {
+          const guide = document.createElement("div");
+          guide.setAttribute("aria-hidden", "true");
+          guide.style.gridColumn = `2 / ${laneCount + 2}`;
+          guide.style.gridRow = `${dayIdx + 1}`;
+          guide.className = isSelectedDay
+            ? "cal-row-guide border border-[#b80000]/20 bg-[#b80000]/[0.04]"
+            : "cal-row-guide border border-[#e3e1e1]/70 bg-[#f5f4f4]/60";
+          frag.appendChild(guide);
         }
+
+        const cell = document.createElement("button");
+        cell.type = "button";
+        cell.onclick = () => handleCalendarDayClick(cellDate, dateKey);
+        cell.id = `cal_day_${dateKey}`;
+        cell.dataset.calDate = dateKey;
+        cell.style.gridColumn = "1";
+        cell.style.gridRow = `${dayIdx + 1}`;
+        cell.className = "cal-day-badge group p-[3px] rounded-2xl border border-[#3f3f3f] bg-[#525252] flex flex-col items-center cursor-pointer select-none focus:outline-none";
+
+        const innerBorderClass = isSelectedDay
+          ? "border-[6px] border-[#b80000]"
+          : "border border-[#e3e1e1]";
+        const innerCardClass = `cal-day-inner flex flex-col items-center justify-center rounded-xl overflow-hidden bg-[#f5f4f4] ${innerBorderClass} shadow-xs group-active:scale-95 transition-all`;
+
+        const isFirstOfMonth = (cellDate.getDate() === 1);
+        const dPad = cellDate.getDate() < 10 ? `0${cellDate.getDate()}` : `${cellDate.getDate()}`;
+        let dateDisplay = dPad;
+        let pillWidthClass = "w-11";
+
+        if (isFirstOfMonth) {
+          const m = cellDate.getMonth() + 1;
+          const mPad = m < 10 ? `0${m}` : `${m}`;
+          dateDisplay = `${mPad}/${dPad}`;
+          pillWidthClass = "px-1.5 min-w-11";
+        }
+
+        const dateTextColor = isSelectedDay
+          ? "text-[#b80000]"
+          : (isSettledPastLook ? "text-[#9e9e9e]" : "text-[#1b1c1c]");
+        let datePillClass = `${pillWidthClass} h-[20px] flex items-center justify-center ${isFirstOfMonth ? "text-xs" : "text-sm"} font-bold leading-none ${dateTextColor} text-center select-none`;
+        if (isToday) {
+          datePillClass = `${pillWidthClass} h-[20px] rounded-full bg-[#b80000] text-white shadow-xs flex items-center justify-center ${isFirstOfMonth ? "text-xs" : "text-sm"} font-bold leading-none text-center select-none`;
+        }
+
+        cell.innerHTML = `
+          <span class="w-full px-1 text-[10px] font-bold uppercase tracking-wider leading-[11px] mb-[3px] text-center text-white">${dayName}</span>
+          <div class="${innerCardClass}">
+            <div class="flex items-center justify-center w-full h-[20px]">
+              <span class="${datePillClass}">${dateDisplay}</span>
+            </div>
+            <div class="flex flex-col items-center justify-center w-full mt-0.5 gap-[2px]">
+              ${renderSegmentedBarHtml(lzSeg.yellowSegments, lzSeg.greenSegments, lzGrey, "h-1.5")}
+              ${renderSegmentedBarHtml(llSeg.yellowSegments, llSeg.greenSegments, llGrey, "h-1.5")}
+            </div>
+          </div>
+        `;
+        frag.appendChild(cell);
       }
+
+      placed.forEach(({ ev, laneIdx }) => {
+        const startDt = parseDateKey(ev.out_date);
+        const endDt = parseDateKey(ev.due_date);
+        if (!startDt || !endDt) return;
+
+        const rawStartRow = diffCalendarDaysLocal(startDt, startDate);
+        const rawEndRow = diffCalendarDaysLocal(endDt, startDate);
+        const startRow = Math.max(0, Math.min(totalDays - 1, rawStartRow));
+        const endRow = Math.max(startRow, Math.min(totalDays - 1, rawEndRow));
+
+        const deviceCount = getBookingsForEvent(globalStore, ev.id).length;
+        const countLabel = String(deviceCount).padStart(2, "0");
+        const isSelectedEvent = calendarSelectedEventId === ev.id;
+        const custName = getEventCustomerName(globalStore, ev);
+        const titleLabel = custName ? `${custName} • ${ev.name}` : ev.name;
+
+        const strip = document.createElement("button");
+        strip.type = "button";
+        strip.id = `cal_strip_${ev.id}`;
+        strip.dataset.eventId = ev.id;
+        strip.title = `${titleLabel} (${countLabel})`;
+        strip.setAttribute("aria-label", `${titleLabel}, ${countLabel} devices, ${ev.out_date} to ${ev.due_date}`);
+        strip.onclick = () => handleCalendarEventChipClick(ev.id);
+        strip.style.gridColumn = `${laneIdx + 2}`;
+        strip.style.gridRow = `${startRow + 1} / ${endRow + 2}`;
+
+        const stripSurfaceClass = isSelectedEvent
+          ? "bg-[#525252] border-[#3f3f3f] shadow-sm"
+          : "bg-[#eae8e8] border-[#dad8d8] hover:border-[#c8c5c5]";
+
+        strip.className = `cal-strip-pill group w-full h-full rounded-2xl border ${stripSurfaceClass} pt-1.5 pb-1 px-0.5 flex flex-col items-center justify-start cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]`;
+        strip.innerHTML = `
+          <span class="inline-flex items-center justify-center min-w-[24px] px-1.5 py-0.5 rounded-full bg-white text-[#b80000] shadow-xs text-[11px] font-bold leading-none tabular-nums">${countLabel}</span>
+        `;
+        frag.appendChild(strip);
+      });
+
+      container.appendChild(frag);
     }
 
-    const CALENDAR_TARGET_VISIBLE_ROW = 4;
+    const CALENDAR_TARGET_VISIBLE_ROW = 2;
     let calScrollRaf = null;
     let suppressCalScrollSync = false;
 
     function scrollCalendarToDate(targetDate, smooth = false) {
       if (!targetDate) targetDate = selectedDate;
       const mainEl = document.querySelector("main");
-      const dateKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
+      const dateKey = formatDateInputValue(targetDate);
       const targetTile = document.getElementById(`cal_day_${dateKey}`);
       if (!mainEl || !targetTile) return;
 
@@ -4059,11 +4234,11 @@
 
       const gridEl = document.getElementById("calendarRollingGrid");
       const computedStyle = gridEl && window.getComputedStyle ? window.getComputedStyle(gridEl) : null;
-      const rowGap = computedStyle ? (parseFloat(computedStyle.rowGap) || 10) : 10;
-      const rowHeight = targetTile.offsetHeight || 58;
+      const rowGap = computedStyle ? (parseFloat(computedStyle.rowGap) || 8) : 8;
+      const rowHeight = targetTile.offsetHeight || 80;
       const rowStride = rowHeight + rowGap;
 
-      // Keep 13px clearance under header (matching 110px padding on 97px header), then place target on row 4
+      // Keep 13px clearance under header (matching 110px padding on 97px header), then place target near top (row 2)
       const desiredViewportTop = headerBottom + 13 + ((CALENDAR_TARGET_VISIBLE_ROW - 1) * rowStride);
       const nextScrollTop = Math.max(0, mainEl.scrollTop + (tileRect.top - desiredViewportTop));
 
@@ -4095,11 +4270,13 @@
         if (calScrollRaf) cancelAnimationFrame(calScrollRaf);
         calScrollRaf = requestAnimationFrame(() => {
           const mainRect = mainEl.getBoundingClientRect();
+          const gridEl = document.getElementById("calendarRollingGrid");
+          const gridRect = gridEl ? gridEl.getBoundingClientRect() : mainRect;
           const centerY = mainRect.top + (mainRect.height / 2);
-          const centerX = mainRect.left + (mainRect.width / 2);
-          const centerEl = document.elementFromPoint(centerX, centerY) ||
-                           document.elementFromPoint(centerX - 24, centerY) ||
-                           document.elementFromPoint(centerX + 24, centerY);
+          const badgeColumnX = gridRect.left + 36;
+          const centerEl = document.elementFromPoint(badgeColumnX, centerY) ||
+                           document.elementFromPoint(badgeColumnX, centerY - 12) ||
+                           document.elementFromPoint(badgeColumnX, centerY + 12);
           const tile = centerEl ? centerEl.closest("[data-cal-date]") : null;
           if (tile && tile.dataset.calDate) {
             const parts = tile.dataset.calDate.split("-");
