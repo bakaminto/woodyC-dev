@@ -55,6 +55,48 @@
       transition: none !important;
       pointer-events: none !important;
     }
+
+    #timelineDaysContainer {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      height: 88px;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      touch-action: manipulation;
+      scroll-snap-type: x mandatory;
+    }
+
+    .timeline-day-spacer {
+      flex: 0 0 auto;
+      width: calc(50% - 38px);
+      height: 4px;
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+
+    .timeline-day-btn {
+      flex: 0 0 auto;
+      scroll-snap-align: center;
+      padding: 3px;
+      border-width: 1px;
+      border-style: solid;
+      border-radius: 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-sizing: border-box;
+    }
+
+    .timeline-day-box {
+      width: 64px;
+      height: 64px;
+      border-radius: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
   </style>
 </head>
 
@@ -272,8 +314,8 @@
     class="fixed bottom-0 inset-x-0 z-40 bg-[#fbf9f9] border-t border-[#e9e8e7] px-3 pt-1 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] shadow-lg select-none">
     <div id="timelineFooterInner" class="max-w-md mx-auto">
       <!-- Scrollable center-snapped day badges matching Calendar event badge frame -->
-      <div id="timelineDaysContainer"
-        class="relative h-[88px] flex items-center gap-0.5 overflow-x-auto no-scrollbar snap-x snap-mandatory"></div>
+      <div id="timelineDaysContainer" tabindex="0" role="region" aria-label="Date timeline"
+        class="relative h-[88px] flex items-center gap-0.5 overflow-x-auto no-scrollbar snap-x snap-mandatory focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000] rounded-xl"></div>
     </div>
   </footer>
 
@@ -472,7 +514,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.1";
+    const APP_VERSION = "C01.2";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -3463,7 +3505,9 @@
     let timelineRenderedMeta = { startKey: "", endKey: "", todayKey: "", activeKey: "" };
     let timelineScrollRaf = null;
     let suppressTimelineScrollSync = false;
+    let timelineStartupLocked = true;
     let timelineProgrammaticTimer = null;
+    let timelineProgrammaticTargetLeft = null;
     let timelineSnapSettleTimer = null;
 
     function applyTimelineChipVisual(chip, dayDate, dateKey, todayKey, selectedKey) {
@@ -3482,6 +3526,11 @@
         ? "border-[#3f3f3f] bg-[#525252]"
         : "border-transparent bg-transparent";
       chip.className = `timeline-day-btn shrink-0 snap-center group p-[3px] rounded-2xl border flex flex-col items-center cursor-pointer select-none focus:outline-none ${outerFrameClass}`;
+      if (isSelected) {
+        chip.setAttribute("aria-current", "date");
+      } else {
+        chip.removeAttribute("aria-current");
+      }
 
       const headerColor = isSelected ? "text-white" : (isPast ? "text-[#9e9e9e]" : "text-[#5d403b]");
       let boxStateClass = "";
@@ -3504,7 +3553,7 @@
 
       chip.innerHTML = `
         <span class="w-full px-1 text-[10px] font-bold uppercase tracking-wider leading-[11px] mb-[3px] text-center ${headerColor}">${dayName}</span>
-        <div class="w-16 h-16 rounded-xl flex items-center justify-center transition-all group-active:scale-95 ${boxStateClass}">
+        <div class="timeline-day-box w-16 h-16 rounded-xl flex items-center justify-center transition-all group-active:scale-95 ${boxStateClass}">
           ${dateHtml}
         </div>
       `;
@@ -3522,20 +3571,24 @@
         clearTimeout(timelineProgrammaticTimer);
         timelineProgrammaticTimer = null;
       }
+      timelineProgrammaticTargetLeft = null;
       suppressTimelineScrollSync = true;
-      if (typeof container.scrollTo === "function") {
-        container.scrollTo({ left: targetLeft, behavior: smooth ? "smooth" : "auto" });
-      }
-      if (!smooth || typeof container.scrollTo !== "function") {
-        container.scrollLeft = targetLeft;
-      }
+      const alreadyAtTarget = Math.abs((container.scrollLeft || 0) - targetLeft) < 1;
 
-      if (smooth) {
+      if (smooth && !alreadyAtTarget && typeof container.scrollTo === "function") {
+        timelineProgrammaticTargetLeft = targetLeft;
+        container.scrollTo({ left: targetLeft, behavior: "smooth" });
         timelineProgrammaticTimer = setTimeout(() => {
           suppressTimelineScrollSync = false;
           timelineProgrammaticTimer = null;
+          timelineProgrammaticTargetLeft = null;
         }, 750);
       } else {
+        const prevSnap = container.style.scrollSnapType;
+        container.style.scrollSnapType = "none";
+        container.scrollLeft = targetLeft;
+        void container.offsetWidth;
+        container.style.scrollSnapType = prevSnap;
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             suppressTimelineScrollSync = false;
@@ -3564,7 +3617,7 @@
         container.innerHTML = "";
         const startSpacer = document.createElement("div");
         startSpacer.setAttribute("aria-hidden", "true");
-        startSpacer.className = "shrink-0 w-[calc(50%-38px)] h-1 pointer-events-none";
+        startSpacer.className = "timeline-day-spacer shrink-0 w-[calc(50%-38px)] h-1 pointer-events-none";
         container.appendChild(startSpacer);
 
         for (let i = 0; i < totalDays; i++) {
@@ -3581,7 +3634,7 @@
 
         const endSpacer = document.createElement("div");
         endSpacer.setAttribute("aria-hidden", "true");
-        endSpacer.className = "shrink-0 w-[calc(50%-38px)] h-1 pointer-events-none";
+        endSpacer.className = "timeline-day-spacer shrink-0 w-[calc(50%-38px)] h-1 pointer-events-none";
         container.appendChild(endSpacer);
 
         timelineRenderedMeta = { startKey, endKey, todayKey, activeKey: selectedKey };
@@ -3606,7 +3659,7 @@
     }
 
     function syncTimelineCenterFromScroll() {
-      if ((currentView !== "grid" && currentView !== "list") || suppressTimelineScrollSync) return;
+      if ((currentView !== "grid" && currentView !== "list") || suppressTimelineScrollSync || timelineStartupLocked) return;
       const container = document.getElementById("timelineDaysContainer");
       if (!container || !container.clientWidth) return;
 
@@ -3646,39 +3699,101 @@
       if (!container) return;
 
       const releaseSuppression = () => {
+        timelineStartupLocked = false;
         if (timelineProgrammaticTimer) {
           clearTimeout(timelineProgrammaticTimer);
           timelineProgrammaticTimer = null;
         }
+        timelineProgrammaticTargetLeft = null;
         suppressTimelineScrollSync = false;
       };
 
       container.addEventListener("pointerdown", releaseSuppression, { passive: true });
       container.addEventListener("touchstart", releaseSuppression, { passive: true });
       container.addEventListener("wheel", releaseSuppression, { passive: true });
+      container.addEventListener("keydown", releaseSuppression, { passive: true });
+
+      const supportsScrollEnd = "onscrollend" in window;
 
       container.addEventListener("scroll", () => {
-        if ((currentView !== "grid" && currentView !== "list") || suppressTimelineScrollSync) return;
-        if (timelineScrollRaf) cancelAnimationFrame(timelineScrollRaf);
-        timelineScrollRaf = requestAnimationFrame(syncTimelineCenterFromScroll);
+        if ((currentView !== "grid" && currentView !== "list") || suppressTimelineScrollSync || timelineStartupLocked) return;
+        if (!timelineScrollRaf) {
+          timelineScrollRaf = requestAnimationFrame(() => {
+            timelineScrollRaf = null;
+            syncTimelineCenterFromScroll();
+          });
+        }
 
-        if (timelineSnapSettleTimer) clearTimeout(timelineSnapSettleTimer);
-        timelineSnapSettleTimer = setTimeout(syncTimelineCenterFromScroll, 110);
+        if (!supportsScrollEnd) {
+          if (timelineSnapSettleTimer) clearTimeout(timelineSnapSettleTimer);
+          timelineSnapSettleTimer = setTimeout(syncTimelineCenterFromScroll, 110);
+        }
       }, { passive: true });
 
-      container.addEventListener("scrollend", () => {
-        releaseSuppression();
-        syncTimelineCenterFromScroll();
-      }, { passive: true });
+      if (supportsScrollEnd) {
+        container.addEventListener("scrollend", () => {
+          if (timelineStartupLocked) return;
+          if (
+            timelineProgrammaticTimer &&
+            timelineProgrammaticTargetLeft !== null &&
+            Math.abs((container.scrollLeft || 0) - timelineProgrammaticTargetLeft) > 4
+          ) {
+            return;
+          }
+          releaseSuppression();
+          syncTimelineCenterFromScroll();
+        }, { passive: true });
+      }
 
-      window.addEventListener("resize", () => {
+      const recenterIfVisible = () => {
         if (currentView === "grid" || currentView === "list") {
           scrollTimelineToDate(selectedDate, false);
         }
-      }, { passive: true });
+      };
+
+      window.addEventListener("resize", recenterIfVisible, { passive: true });
+      if (typeof ResizeObserver === "function") {
+        const ro = new ResizeObserver(() => {
+          if (timelineStartupLocked) {
+            recenterIfVisible();
+          }
+        });
+        ro.observe(container);
+      }
+
+      const stabilizeStartupTimeline = () => {
+        if (timelineStartupLocked) {
+          recenterIfVisible();
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              timelineStartupLocked = false;
+            });
+          });
+        }
+      };
+
+      if (document.readyState === "complete") {
+        stabilizeStartupTimeline();
+      } else {
+        document.addEventListener("DOMContentLoaded", () => {
+          if (timelineStartupLocked) recenterIfVisible();
+        }, { once: true });
+        window.addEventListener("load", stabilizeStartupTimeline, { once: true });
+        setTimeout(() => {
+          if (timelineStartupLocked) recenterIfVisible();
+        }, 150);
+        setTimeout(stabilizeStartupTimeline, 600);
+      }
+
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+          if (timelineStartupLocked) recenterIfVisible();
+        });
+      }
     }
 
     function selectDay(date, smoothScroll = false) {
+      timelineStartupLocked = false;
       selectedDate = new Date(date);
       updateTimelineFooter({ smooth: smoothScroll });
       if (currentView === "calendar") {
