@@ -1,6 +1,6 @@
 {
-  "name": "woodyC",
-  "short_name": "woodyC",
+  "name": "woodyC-dev",
+  "short_name": "woodyC-dev",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#fbf9f9",

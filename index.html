@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     name="viewport">
-  <title>woodyC</title>
+  <title>woodyC-dev</title>
 
   <!-- PWA & Shortcut Icon Metadata -->
   <link rel="manifest" href="manifest.json">
@@ -14,7 +14,7 @@
   <meta name="theme-color" content="#fbf9f9">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="woodyC">
+  <meta name="apple-mobile-web-app-title" content="woodyC-dev">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -472,7 +472,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01";
+    const APP_VERSION = "C01.1";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -873,7 +873,7 @@
       return data;
     }
 
-    const STORAGE_KEY = "fleet_ledger_data_C";
+    const STORAGE_KEY = "fleet_ledger_data_C_dev";
 
     function loadStore() {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -2997,7 +2997,7 @@
       const hh = pad(now.getHours());
       const min = pad(now.getMinutes());
       const ss = pad(now.getSeconds());
-      return `fleet_export_C_${yyyy}${mm}${dd}_${hh}${min}${ss}`;
+      return `fleet_export_C_dev_${yyyy}${mm}${dd}_${hh}${min}${ss}`;
     }
 
     function clearTransferInputs() {
@@ -3135,7 +3135,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "fleet_reset_C.json";
+      a.download = "fleet_reset_C_dev.json";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
