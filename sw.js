@@ -1,4 +1,4 @@
-const CACHE_NAME = 'woody-C01.6';
+const CACHE_NAME = 'woody-C01.7';
 const ASSETS = [
   './',
   './index.html',

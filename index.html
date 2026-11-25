@@ -132,6 +132,15 @@
       overscroll-behavior-y: contain;
       touch-action: manipulation;
     }
+
+    #inputDetailEvent {
+      color: transparent;
+    }
+
+    #inputDetailEvent option {
+      color: #1b1c1c;
+      background-color: #ffffff;
+    }
   </style>
 </head>
 
@@ -277,14 +286,17 @@
             <label for="inputDetailEvent" class="text-xs font-semibold text-[#5d403b]">Event</label>
             <div class="relative w-full">
               <select id="inputDetailEvent"
-                class="w-full h-11 bg-[#f5f3f3] text-sm text-[#1b1c1c] font-medium pl-3 pr-9 rounded-lg appearance-none focus:outline-none focus:ring-1 focus:ring-[#916f69] cursor-pointer">
+                class="w-full h-11 bg-[#f5f3f3] text-sm font-medium pl-3 pr-9 rounded-lg appearance-none focus:outline-none focus:ring-1 focus:ring-[#916f69] cursor-pointer">
                 <option value="">Select event...</option>
               </select>
+              <span id="detailEventDisplayText" aria-hidden="true"
+                class="pointer-events-none absolute inset-y-0 left-3 right-9 flex items-center text-sm font-medium truncate text-[#5d403b]/50 select-none">Select event...</span>
               <svg class="w-5 h-5 text-[#916f69] fill-current pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
                 viewBox="0 0 24 24">
                 <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
               </svg>
             </div>
+            <p id="detailEventCapacityError" class="hidden text-[11px] font-semibold text-[#b80000] leading-snug mt-0.5"></p>
           </div>
 
           <div class="flex flex-col gap-1">
@@ -490,6 +502,14 @@
           class="w-full h-11 bg-[#f5f3f3] text-sm text-[#1b1c1c] font-medium px-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#916f69]">
       </div>
 
+      <div class="flex flex-col gap-1">
+        <label for="inputEventModalPlannedDevices" class="text-xs font-semibold text-[#5d403b]">Planned Devices</label>
+        <input type="number" id="inputEventModalPlannedDevices" min="0" step="1" inputmode="numeric" value="0" aria-invalid="false"
+          onfocus="this.select()"
+          class="w-full h-11 bg-[#f5f3f3] text-sm text-[#1b1c1c] font-medium px-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#916f69]">
+        <p id="eventModalPlannedConflict" class="hidden text-[11px] font-semibold text-[#b80000] leading-snug mt-0.5"></p>
+      </div>
+
       <div class="grid grid-cols-2 gap-2.5">
         <div class="flex flex-col gap-1">
           <label for="inputEventModalOutDate" class="text-xs font-semibold text-[#5d403b]">Out Date</label>
@@ -546,7 +566,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.6";
+    const APP_VERSION = "C01.7";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -607,6 +627,32 @@
       const cust = findCustomerById(store, ev.customer_id);
       if (cust && (cust.name || "").trim()) return cust.name.trim();
       return (ev.customer || "").trim();
+    }
+
+    function formatTwoDigits(n) {
+      const val = Math.max(0, parseInt(n, 10) || 0);
+      return val < 10 ? `0${val}` : `${val}`;
+    }
+
+    function getEventPlannedCount(ev) {
+      if (!ev) return 0;
+      const n = parseInt(ev.planned_devices, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    function getEventAssignmentStatus(store, eventId, excludeBookingId = null) {
+      const ev = findEventById(store, eventId);
+      if (!ev) return { assignedCount: 0, plannedCount: 0, isFull: false };
+      const bookings = getBookingsForEvent(store, eventId);
+      const otherAssigned = excludeBookingId
+        ? bookings.filter(b => b.id !== excludeBookingId).length
+        : bookings.length;
+      const plannedCount = getEventPlannedCount(ev);
+      return {
+        assignedCount: otherAssigned,
+        plannedCount,
+        isFull: otherAssigned >= plannedCount
+      };
     }
 
     function getBookingEventName(store, booking) {
@@ -816,7 +862,8 @@
           customer: custName,
           name: cleanName,
           out_date: ev.out_date,
-          due_date: ev.due_date
+          due_date: ev.due_date,
+          planned_devices: getEventPlannedCount(ev)
         };
         normalizedEvents.push(normalizedEv);
         eventsById.set(evId, normalizedEv);
@@ -895,7 +942,8 @@
               customer: custName,
               name: sigName,
               out_date: outDate,
-              due_date: dueDate
+              due_date: dueDate,
+              planned_devices: 0
             };
             normalizedEvents.push(linkedEv);
             eventsById.set(newEvId, linkedEv);
@@ -1329,7 +1377,7 @@
             : `${customerLabel.toLowerCase()}|${eventLabel.toLowerCase()}|${dev.out_date || ""}|${dev.due_date || ""}`;
           let group = groupByKey.get(key);
           if (!group) {
-            group = { customer: customerLabel, event: eventLabel, isDue: isDueGroup, items: [] };
+            group = { eventId: dev.event_id || null, customer: customerLabel, event: eventLabel, isDue: isDueGroup, items: [] };
             groupByKey.set(key, group);
             groups.push(group);
           }
@@ -1355,6 +1403,11 @@
         const iconId = `listOutIcon_${idx}`;
         accordionSections.push({ contentId, iconId });
 
+        const evObj = group.eventId ? findEventById(globalStore, group.eventId) : null;
+        const actualCount = evObj ? getBookingsForEvent(globalStore, evObj.id).length : group.items.length;
+        const plannedCount = getEventPlannedCount(evObj);
+        const countTag = `(${formatTwoDigits(actualCount)}/${formatTwoDigits(plannedCount)})`;
+
         const card = document.createElement("div");
         card.className = "flex flex-col rounded-xl bg-[#f5f3f3] border border-[#e9e8e7] overflow-hidden";
 
@@ -1362,13 +1415,14 @@
         headerBtn.type = "button";
         headerBtn.onclick = () => toggleAccordion(contentId, iconId);
         headerBtn.className = "w-full p-4 flex items-center justify-between text-left cursor-pointer hover:bg-[#efeded] transition-colors gap-2";
-        const headingHtml = group.isDue
-          ? `<h2 class="text-xs uppercase font-semibold tracking-wider text-[#5d403b] truncate"><span class="font-extrabold">(DUE)</span> Out on Job - ${escapeHtml(group.customer)} &bull; ${escapeHtml(group.event)}</h2>`
-          : `<h2 class="text-xs uppercase font-bold tracking-wider text-[#5d403b] truncate">Out on Job - ${escapeHtml(group.customer)} &bull; ${escapeHtml(group.event)}</h2>`;
+        const topRowHtml = group.isDue
+          ? `<span class="text-xs uppercase font-semibold tracking-wider text-[#5d403b] truncate"><span class="font-extrabold">(DUE)</span> Out on Job - ${escapeHtml(group.customer)}</span>`
+          : `<span class="text-xs uppercase font-bold tracking-wider text-[#5d403b] truncate">Out on Job - ${escapeHtml(group.customer)}</span>`;
+        const secondRowHtml = `<span class="text-sm font-semibold text-[#1b1c1c] truncate mt-0.5"><span class="tabular-nums">${countTag}</span> ${escapeHtml(group.event)}</span>`;
         headerBtn.innerHTML = `
-          <div class="flex items-center gap-2 min-w-0 flex-1">
-            ${headingHtml}
-            <span class="px-2 py-0.5 rounded-full bg-[#e3e2e2] text-xs font-bold shrink-0">${group.items.length}</span>
+          <div class="flex flex-col min-w-0 flex-1">
+            ${topRowHtml}
+            ${secondRowHtml}
           </div>
           <svg id="${iconId}" class="w-5 h-5 text-[#916f69] transition-transform duration-200 fill-current shrink-0"
             viewBox="0 0 24 24">
@@ -1485,15 +1539,19 @@
       return custName ? `${ev.name} — ${custName} (${span})` : `${ev.name} (${span})`;
     }
 
-    function updateDetailEventSelectStyle() {
+    function updateDetailEventSelectStyle(evRec = null) {
       const select = document.getElementById("inputDetailEvent");
-      if (!select) return;
-      if (select.value) {
-        select.classList.remove("text-[#5d403b]/50");
-        select.classList.add("text-[#1b1c1c]");
+      const displayEl = document.getElementById("detailEventDisplayText");
+      if (!select || !displayEl) return;
+      const resolved = evRec !== null ? evRec : getSelectedDetailEventRecord();
+      if (select.value && resolved) {
+        displayEl.textContent = resolved.name || "Select event...";
+        displayEl.classList.remove("text-[#5d403b]/50");
+        displayEl.classList.add("text-[#1b1c1c]");
       } else {
-        select.classList.remove("text-[#1b1c1c]");
-        select.classList.add("text-[#5d403b]/50");
+        displayEl.textContent = "Select event...";
+        displayEl.classList.remove("text-[#1b1c1c]");
+        displayEl.classList.add("text-[#5d403b]/50");
       }
     }
 
@@ -1701,7 +1759,42 @@
         dueConflictEl.classList.toggle("hidden", !conflicts.dueMessage);
       }
 
-      return conflicts;
+      const selectEl = document.getElementById("inputDetailEvent");
+      const capErrorEl = document.getElementById("detailEventCapacityError");
+      const selectedEventVal = (selectEl?.value || "").trim();
+      const capacityBlocked = Boolean(
+        detailCurrentStatus === "out" &&
+        evRec &&
+        evRec.id &&
+        (selectedEventVal !== (detailBaseline.eventSelectVal || "") || detailBaseline.status !== "out") &&
+        getEventAssignmentStatus(globalStore, evRec.id, activeDetailBookingId).isFull
+      );
+
+      if (selectEl) {
+        selectEl.classList.toggle("ring-2", capacityBlocked);
+        selectEl.classList.toggle("ring-[#b80000]", capacityBlocked);
+        selectEl.setAttribute("aria-invalid", capacityBlocked ? "true" : "false");
+        if (capacityBlocked) {
+          selectEl.setAttribute("aria-describedby", "detailEventCapacityError");
+        } else {
+          selectEl.removeAttribute("aria-describedby");
+        }
+      }
+      if (capErrorEl) {
+        if (capacityBlocked) {
+          const cap = getEventAssignmentStatus(globalStore, evRec.id, activeDetailBookingId);
+          const totalAssigned = getBookingsForEvent(globalStore, evRec.id).length;
+          capErrorEl.textContent = cap.plannedCount === 0
+            ? `No planned devices configured (${formatTwoDigits(totalAssigned)}/${formatTwoDigits(cap.plannedCount)})`
+            : `All planned devices already assigned (${formatTwoDigits(totalAssigned)}/${formatTwoDigits(cap.plannedCount)})`;
+          capErrorEl.classList.remove("hidden");
+        } else {
+          capErrorEl.textContent = "";
+          capErrorEl.classList.add("hidden");
+        }
+      }
+
+      return { ...conflicts, capacityBlocked };
     }
 
     function initDetailView(devId) {
@@ -1748,7 +1841,9 @@
       document.getElementById("detailHeroLabel").textContent = dev.label;
       document.getElementById("detailHeroSlot").textContent = slotEntry ? slotEntry.slot_tag : "";
       populateDetailEventDropdown(detailBaseline.eventId, activeBooking);
-      renderDetailReadonlyFields(getSelectedDetailEventRecord());
+      const initialEvRec = getSelectedDetailEventRecord();
+      updateDetailEventSelectStyle(initialEvRec);
+      renderDetailReadonlyFields(initialEvRec);
       updateDetailDateFieldStates();
       updateDetailVisualState(detailCurrentStatus);
 
@@ -1790,7 +1885,13 @@
           ? evaluateBookingDateConflicts(otherBookings, evRec.out_date, evRec.due_date, globalStore)
           : { hasConflict: false };
         const selectionChanged = selectedEventVal !== (detailBaseline.eventSelectVal || "");
-        canSave = Boolean(evRec) && !conflicts.hasConflict && (selectionChanged || hasStatusChanged);
+        const capacityBlocked = Boolean(
+          evRec &&
+          evRec.id &&
+          (selectionChanged || hasStatusChanged) &&
+          getEventAssignmentStatus(globalStore, evRec.id, activeDetailBookingId).isFull
+        );
+        canSave = Boolean(evRec) && !conflicts.hasConflict && !capacityBlocked && (selectionChanged || hasStatusChanged);
       }
 
       if (canSave) {
@@ -1806,15 +1907,13 @@
       const selectedEventVal = (document.getElementById("inputDetailEvent")?.value || "").trim();
       const evRec = getSelectedDetailEventRecord();
 
-      updateDetailEventSelectStyle();
+      updateDetailEventSelectStyle(evRec);
       renderDetailReadonlyFields(evRec);
-      updateDetailDateFieldStates();
-
       if (selectedEventVal && detailCurrentStatus === "office") {
         updateDetailVisualState("out");
-      } else {
-        checkDetailSaveEligibility();
       }
+      updateDetailDateFieldStates();
+      checkDetailSaveEligibility();
     }
 
     document.getElementById("inputDetailEvent").addEventListener("change", (event) => {
@@ -1832,10 +1931,11 @@
       const legacyOpt = select.querySelector("option[data-legacy-event='true']");
       if (legacyOpt) legacyOpt.remove();
       select.value = "";
-      updateDetailEventSelectStyle();
+      updateDetailEventSelectStyle(null);
       renderDetailReadonlyFields(null);
-      updateDetailDateFieldStates();
       updateDetailVisualState("office");
+      updateDetailDateFieldStates();
+      checkDetailSaveEligibility();
     });
 
     function commitDetailSave() {
@@ -1857,6 +1957,16 @@
         const otherBookings = getBookingsForDevice(globalStore, activeDetailDeviceId, activeDetailBookingId);
         const conflicts = evaluateBookingDateConflicts(otherBookings, evRec.out_date, evRec.due_date, globalStore);
         if (conflicts.hasConflict) return;
+        const selectedEventVal = (document.getElementById("inputDetailEvent")?.value || "").trim();
+        const selectionChanged = selectedEventVal !== (detailBaseline.eventSelectVal || "");
+        const hasStatusChanged = detailCurrentStatus !== detailBaseline.status;
+        if (
+          evRec.id &&
+          (selectionChanged || hasStatusChanged) &&
+          getEventAssignmentStatus(globalStore, evRec.id, activeDetailBookingId).isFull
+        ) {
+          return;
+        }
 
         const existingIdx = activeDetailBookingId
           ? globalStore.bookings.findIndex(b => b.id === activeDetailBookingId)
@@ -2260,9 +2370,8 @@
 
           const titleClass = isPast ? "text-sm font-semibold text-[#9e9e9e] truncate" : "text-sm font-semibold text-[#1b1c1c] truncate";
           const metaClass = isPast ? "text-xs text-[#9e9e9e]" : "text-xs text-[#5d403b]";
-          const countBadgeHtml = deviceCount > 0
-            ? `<span class="px-1.5 py-0.5 rounded bg-[#efeded] text-[10px] font-semibold ${isPast ? "text-[#9e9e9e]" : "text-[#5d403b]"} shrink-0">${deviceCount} ${deviceCount === 1 ? "device" : "devices"}</span>`
-            : "";
+          const plannedCount = getEventPlannedCount(ev);
+          const countBadgeHtml = `<span class="px-1.5 py-0.5 rounded bg-[#efeded] text-[10px] font-semibold ${isPast ? "text-[#9e9e9e]" : "text-[#5d403b]"} shrink-0 tabular-nums">${formatTwoDigits(deviceCount)}/${formatTwoDigits(plannedCount)} devices</span>`;
 
           const deleteBtnClass = canDelete
             ? "p-2 rounded-lg text-[#5d403b] hover:text-[#b80000] active:scale-90 transition-all cursor-pointer shrink-0"
@@ -2833,6 +2942,7 @@
       document.getElementById("btnConfirmEventModal").textContent = "Add";
       populateEventModalCustomerDropdown(null, "");
       document.getElementById("inputEventModalName").value = "";
+      document.getElementById("inputEventModalPlannedDevices").value = "0";
       document.getElementById("inputEventModalOutDate").value = "";
       document.getElementById("inputEventModalDueDate").value = "";
       validateEventModal();
@@ -2849,6 +2959,7 @@
       document.getElementById("btnConfirmEventModal").textContent = "Apply";
       populateEventModalCustomerDropdown(ev.customer_id, ev.customer);
       document.getElementById("inputEventModalName").value = ev.name || "";
+      document.getElementById("inputEventModalPlannedDevices").value = String(getEventPlannedCount(ev));
       document.getElementById("inputEventModalOutDate").value = ev.out_date || "";
       document.getElementById("inputEventModalDueDate").value = ev.due_date || "";
       validateEventModal();
@@ -2904,12 +3015,44 @@
     function validateEventModal() {
       const custVal = (document.getElementById("inputEventModalCustomer")?.value || "").trim();
       const nameVal = (document.getElementById("inputEventModalName")?.value || "").trim();
+      const plannedEl = document.getElementById("inputEventModalPlannedDevices");
+      const plannedErrEl = document.getElementById("eventModalPlannedConflict");
       const outEl = document.getElementById("inputEventModalOutDate");
       const dueEl = document.getElementById("inputEventModalDueDate");
       const outErrEl = document.getElementById("eventModalOutDateConflict");
       const dueErrEl = document.getElementById("eventModalDueDateConflict");
       const btn = document.getElementById("btnConfirmEventModal");
-      if (!outEl || !dueEl || !btn) return;
+      if (!outEl || !dueEl || !btn || !plannedEl) return;
+
+      const rawPlanned = (plannedEl.value || "").trim();
+      const plannedIsInt = /^\d+$/.test(rawPlanned);
+      const plannedVal = plannedIsInt ? parseInt(rawPlanned, 10) : -1;
+      const assignedCount = activeEditEventId ? getBookingsForEvent(setupWorkingStore, activeEditEventId).length : 0;
+      plannedEl.min = String(assignedCount);
+
+      let plannedInvalid = false;
+      let plannedMsg = "";
+      if (!plannedIsInt || plannedVal < 0) {
+        plannedInvalid = true;
+        plannedMsg = "Enter a valid number (0 or higher).";
+      } else if (plannedVal < assignedCount) {
+        plannedInvalid = true;
+        plannedMsg = `At least ${formatTwoDigits(assignedCount)} already assigned.`;
+      }
+
+      plannedEl.classList.toggle("ring-2", plannedInvalid);
+      plannedEl.classList.toggle("ring-[#b80000]", plannedInvalid);
+      plannedEl.classList.toggle("text-[#b80000]", plannedInvalid);
+      plannedEl.setAttribute("aria-invalid", plannedInvalid ? "true" : "false");
+      if (plannedInvalid) {
+        plannedEl.setAttribute("aria-describedby", "eventModalPlannedConflict");
+      } else {
+        plannedEl.removeAttribute("aria-describedby");
+      }
+      if (plannedErrEl) {
+        plannedErrEl.textContent = plannedMsg;
+        plannedErrEl.classList.toggle("hidden", !plannedMsg);
+      }
 
       const outVal = outEl.value;
       const dueVal = dueEl.value;
@@ -2960,13 +3103,14 @@
           changed = (
             custVal !== existingCustVal ||
             nameVal !== (existing.name || "") ||
+            plannedVal !== getEventPlannedCount(existing) ||
             outVal !== (existing.out_date || "") ||
             dueVal !== (existing.due_date || "")
           );
         }
       }
 
-      const isValid = Boolean(custVal && nameVal && outVal && dueVal) && !outInvalid && !dueInvalid && changed;
+      const isValid = Boolean(custVal && nameVal && outVal && dueVal) && !plannedInvalid && !outInvalid && !dueInvalid && changed;
       btn.disabled = !isValid;
       btn.className = isValid
         ? "px-4 py-1.5 bg-[#b80000] hover:bg-[#8b0000] text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
@@ -2982,7 +3126,7 @@
       validateEventModal();
     });
 
-    ["inputEventModalName", "inputEventModalOutDate", "inputEventModalDueDate"].forEach(id => {
+    ["inputEventModalName", "inputEventModalPlannedDevices", "inputEventModalOutDate", "inputEventModalDueDate"].forEach(id => {
       const el = document.getElementById(id);
       el.addEventListener("input", validateEventModal);
       el.addEventListener("change", validateEventModal);
@@ -2997,11 +3141,15 @@
     function confirmEventModalAction() {
       const custVal = (document.getElementById("inputEventModalCustomer")?.value || "").trim();
       const nameVal = (document.getElementById("inputEventModalName")?.value || "").trim();
+      const rawPlanned = (document.getElementById("inputEventModalPlannedDevices")?.value || "").trim();
+      const plannedVal = /^\d+$/.test(rawPlanned) ? parseInt(rawPlanned, 10) : -1;
       const outVal = document.getElementById("inputEventModalOutDate")?.value || "";
       const dueVal = document.getElementById("inputEventModalDueDate")?.value || "";
-      if (!custVal || !nameVal || !outVal || !dueVal || dueVal < outVal) return;
+      if (!custVal || !nameVal || plannedVal < 0 || !outVal || !dueVal || dueVal < outVal) return;
 
       if (activeEditEventId) {
+        const assignedCount = getBookingsForEvent(setupWorkingStore, activeEditEventId).length;
+        if (plannedVal < assignedCount) return;
         const cross = evaluateEventCrossDeviceConflicts(activeEditEventId, outVal, dueVal);
         if (cross.hasConflict) return;
       }
@@ -3027,6 +3175,7 @@
           existing.customer_id = resolvedCustId;
           existing.customer = resolvedCustName;
           existing.name = nameVal;
+          existing.planned_devices = plannedVal;
           existing.out_date = outVal;
           existing.due_date = dueVal;
           if (Array.isArray(setupWorkingStore.bookings)) {
@@ -3048,6 +3197,7 @@
           customer_id: resolvedCustId,
           customer: resolvedCustName,
           name: nameVal,
+          planned_devices: plannedVal,
           out_date: outVal,
           due_date: dueVal
         });
@@ -3524,6 +3674,9 @@
         const isPast = Boolean(ev.due_date && ev.due_date < todayKey);
         const custName = getEventCustomerName(globalStore, ev);
         const dateSpan = [ev.out_date, ev.due_date].filter(Boolean).join(" &bull; ");
+        const actualCount = getBookingsForEvent(globalStore, ev.id).length;
+        const plannedCount = getEventPlannedCount(ev);
+        const countTag = `(${formatTwoDigits(actualCount)}/${formatTwoDigits(plannedCount)})`;
         const edgeMarginClass = `${idx === 0 ? " ml-1" : ""}${idx === events.length - 1 ? " mr-1" : ""}`;
 
         const chip = document.createElement("button");
@@ -3548,7 +3701,7 @@
           <div class="relative z-10 w-full flex flex-col items-center transition-transform group-active:scale-95">
             <span class="w-full px-1 text-[10px] font-bold uppercase tracking-wider leading-[11px] mb-[3px] truncate text-center ${custHeaderColor}">${custName ? escapeHtml(custName) : "&nbsp;"}</span>
             <div class="${cardClass}">
-              <span class="text-sm font-semibold ${titleColor} truncate w-full text-center">${escapeHtml(ev.name)}</span>
+              <span class="text-sm font-semibold ${titleColor} truncate w-full text-center"><span class="tabular-nums">${countTag}</span> ${escapeHtml(ev.name)}</span>
               <span class="text-xs ${metaColor} mt-0.5 whitespace-nowrap text-center">${dateSpan}</span>
             </div>
           </div>
@@ -4327,7 +4480,9 @@
 
       placed.forEach(({ ev, laneIdx, startSlot, endSlot }) => {
         const deviceCount = getBookingsForEvent(globalStore, ev.id).length;
-        const countLabel = String(deviceCount).padStart(2, "0");
+        const plannedCount = getEventPlannedCount(ev);
+        const actualLabel = formatTwoDigits(deviceCount);
+        const plannedLabel = formatTwoDigits(plannedCount);
         const isSelectedEvent = calendarSelectedEventId === ev.id;
         const custName = getEventCustomerName(globalStore, ev);
         const custShort = custName ? custName.trim().slice(0, 4) : "";
@@ -4337,15 +4492,19 @@
         strip.type = "button";
         strip.id = `cal_strip_${ev.id}`;
         strip.dataset.eventId = ev.id;
-        strip.title = `${titleLabel} (${countLabel})`;
-        strip.setAttribute("aria-label", `${titleLabel}, ${countLabel} devices, ${ev.out_date} to ${ev.due_date}`);
+        strip.title = `${titleLabel} (${actualLabel}/${plannedLabel})`;
+        strip.setAttribute("aria-label", `${titleLabel}, ${actualLabel} of ${plannedLabel} devices, ${ev.out_date} to ${ev.due_date}`);
         strip.onclick = () => handleCalendarEventChipClick(ev.id);
         strip.style.gridColumn = `${laneIdx + 2}`;
         strip.style.gridRow = `${startSlot + 1} / ${endSlot + 2}`;
         strip.innerHTML = `
           <span data-strip-cust>${custShort ? escapeHtml(custShort) : "&nbsp;"}</span>
           <div data-strip-body>
-            <span class="inline-flex items-center justify-center min-w-[26px] max-w-full h-[22px] px-1.5 rounded-full bg-white text-[#b80000] shadow-xs text-sm font-bold leading-none tabular-nums">${countLabel}</span>
+            <div class="inline-flex flex-col items-center justify-center min-w-[26px] max-w-full px-1.5 py-1 rounded-xl bg-white text-[#b80000] shadow-xs tabular-nums">
+              <span class="text-xs font-bold leading-none">${actualLabel}</span>
+              <span aria-hidden="true" class="w-4 h-[1px] bg-[#dad8d8] my-[2px]"></span>
+              <span class="text-xs font-bold leading-none">${plannedLabel}</span>
+            </div>
           </div>
         `;
         applyCalendarStripVisual(strip, isSelectedEvent);
