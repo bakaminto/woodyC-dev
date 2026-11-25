@@ -566,7 +566,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.7";
+    const APP_VERSION = "C01.8";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -1029,6 +1029,7 @@
     let setupWorkingStore = null;
     let setupOpenGroupIds = new Set();
     let setupOpenEventCustomerKeys = new Set();
+    let setupStagedUnassignedBookings = new Map();
     let setupActiveTab = "events";
     let isSetupDirty = false;
     let activeSwapSourceNum = null;
@@ -1037,8 +1038,6 @@
     let activeRenameCustomerId = null;
     let activeEditEventId = null;
     let activeDeviceTypeId = null;
-    let copyEventResetTimer = null;
-    let copyEventActiveId = null;
 
     let listTargetScrollDevId = null;
     let listTargetOpenSection = null;
@@ -1169,6 +1168,7 @@
         setupWorkingStore = JSON.parse(JSON.stringify(globalStore));
         setupOpenGroupIds.clear();
         setupOpenEventCustomerKeys.clear();
+        setupStagedUnassignedBookings.clear();
         setSetupClean();
         switchSetupTab("events");
       }
@@ -1179,6 +1179,7 @@
         switchView(originView);
       } else if (currentView === "setup") {
         setupWorkingStore = null;
+        setupStagedUnassignedBookings.clear();
         switchView(originView);
       }
     }
@@ -1527,9 +1528,6 @@
     }
 
     // Detail View
-    const COPY_ICON_PATH = "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z";
-    const CHECK_ICON_PATH = "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
-
     function formatEventDropdownLabel(store, ev) {
       if (!ev) return "";
       const custName = getEventCustomerName(store, ev);
@@ -1643,69 +1641,6 @@
         };
       }
       return null;
-    }
-
-    function resetCopyEventIcon() {
-      if (copyEventResetTimer) {
-        clearTimeout(copyEventResetTimer);
-        copyEventResetTimer = null;
-      }
-      if (copyEventActiveId) {
-        const icon = document.getElementById(`iconCopyEvent_${copyEventActiveId}`);
-        if (icon) {
-          const pathEl = icon.querySelector("path");
-          if (pathEl) pathEl.setAttribute("d", COPY_ICON_PATH);
-          icon.classList.remove("text-[#2e7d32]");
-        }
-        copyEventActiveId = null;
-      }
-    }
-
-    function handleCopyEventName(evId) {
-      const targetStore = setupWorkingStore || globalStore;
-      const ev = findEventById(targetStore, evId);
-      const val = ev ? (ev.name || "").trim() : "";
-      if (!val) return;
-
-      const finishVisualFeedback = () => {
-        resetCopyEventIcon();
-        const icon = document.getElementById(`iconCopyEvent_${evId}`);
-        if (icon) {
-          const pathEl = icon.querySelector("path");
-          if (pathEl) pathEl.setAttribute("d", CHECK_ICON_PATH);
-          icon.classList.add("text-[#2e7d32]");
-          copyEventActiveId = evId;
-          copyEventResetTimer = setTimeout(() => {
-            resetCopyEventIcon();
-          }, 1200);
-        }
-      };
-
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        navigator.clipboard.writeText(val).then(finishVisualFeedback).catch(() => {
-          fallbackCopyText(val);
-          finishVisualFeedback();
-        });
-      } else {
-        fallbackCopyText(val);
-        finishVisualFeedback();
-      }
-    }
-
-    function fallbackCopyText(text) {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-      } catch (err) {
-        console.warn("Clipboard fallback failed:", err);
-      }
-      document.body.removeChild(ta);
     }
 
     function renderDetailReadonlyFields(evRec) {
@@ -2371,7 +2306,17 @@
           const titleClass = isPast ? "text-sm font-semibold text-[#9e9e9e] truncate" : "text-sm font-semibold text-[#1b1c1c] truncate";
           const metaClass = isPast ? "text-xs text-[#9e9e9e]" : "text-xs text-[#5d403b]";
           const plannedCount = getEventPlannedCount(ev);
-          const countBadgeHtml = `<span class="px-1.5 py-0.5 rounded bg-[#efeded] text-[10px] font-semibold ${isPast ? "text-[#9e9e9e]" : "text-[#5d403b]"} shrink-0 tabular-nums">${formatTwoDigits(deviceCount)}/${formatTwoDigits(plannedCount)} devices</span>`;
+          const countBadgeHtml = `<span class="px-2 py-0.5 rounded bg-[#efeded] text-xs font-semibold ${isPast ? "text-[#9e9e9e]" : "text-[#5d403b]"} shrink-0 tabular-nums">${formatTwoDigits(deviceCount)}/${formatTwoDigits(plannedCount)} devices</span>`;
+
+          const isToggleChecked = deviceCount > 0;
+          const canToggleRestore = setupStagedUnassignedBookings.has(ev.id);
+          const isToggleEnabled = isToggleChecked || canToggleRestore;
+          const toggleLabelClass = isToggleEnabled
+            ? "relative inline-flex items-center cursor-pointer shrink-0"
+            : "relative inline-flex items-center opacity-45 cursor-not-allowed shrink-0";
+          const toggleTitle = isToggleChecked
+            ? "Unassign all devices on Save"
+            : (canToggleRestore ? "Restore staged devices" : "No devices assigned");
 
           const deleteBtnClass = canDelete
             ? "p-2 rounded-lg text-[#5d403b] hover:text-[#b80000] active:scale-90 transition-all cursor-pointer shrink-0"
@@ -2385,14 +2330,13 @@
               </div>
               <span class="${metaClass} mt-0.5">${ev.out_date} &bull; ${ev.due_date}</span>
             </button>
-            <div class="flex items-center gap-0.5 shrink-0">
-              <button type="button" id="btnCopyEvent_${ev.id}" onclick="handleCopyEventName('${ev.id}')"
-                class="p-2 rounded-lg text-[#5d403b] hover:text-[#1b1c1c] active:scale-90 transition-all cursor-pointer shrink-0"
-                title="Copy event name" aria-label="Copy event name">
-                <svg id="iconCopyEvent_${ev.id}" class="w-[18px] h-[18px] fill-current" viewBox="0 0 24 24">
-                  <path d="${COPY_ICON_PATH}" />
-                </svg>
-              </button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <label class="${toggleLabelClass}" title="${toggleTitle}">
+                <input type="checkbox" ${isToggleChecked ? "checked" : ""} ${isToggleEnabled ? "" : "disabled"}
+                  aria-label="Toggle assigned devices for ${escapeHtml(ev.name)}"
+                  class="sr-only peer" onchange="handleSetupEventToggle('${ev.id}', this.checked)">
+                <div class="w-11 h-6 bg-[#dbdad9] peer-focus:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[#b80000]/40 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#b80000]"></div>
+              </label>
               <button type="button" id="btnDeleteEvent_${ev.id}" ${canDelete ? `onclick="handleDeleteEvent('${ev.id}')"` : "disabled"}
                 class="${deleteBtnClass}"
                 title="${canDelete ? "Delete event" : "Cannot delete event while devices are assigned"}"
@@ -2412,9 +2356,102 @@
       });
     }
 
+    function handleSetupEventToggle(evId, isChecked) {
+      if (!setupWorkingStore || !evId) return;
+      if (!Array.isArray(setupWorkingStore.bookings)) {
+        setupWorkingStore.bookings = [];
+      }
+
+      if (!isChecked) {
+        const staged = [];
+        const remaining = [];
+        setupWorkingStore.bookings.forEach((b, idx) => {
+          if (b && b.event_id === evId) {
+            staged.push({ index: idx, booking: JSON.parse(JSON.stringify(b)) });
+          } else {
+            remaining.push(b);
+          }
+        });
+        if (staged.length === 0) {
+          renderSetupView();
+          return;
+        }
+        setupStagedUnassignedBookings.set(evId, staged);
+        setupWorkingStore.bookings = remaining;
+        setSetupDirty();
+        renderSetupView();
+      } else {
+        const staged = setupStagedUnassignedBookings.get(evId);
+        const ev = findEventById(setupWorkingStore, evId);
+        if (!staged || staged.length === 0 || !ev) {
+          setupStagedUnassignedBookings.delete(evId);
+          renderSetupView();
+          return;
+        }
+
+        const plannedLimit = getEventPlannedCount(ev);
+        const existingBookings = getBookingsForEvent(setupWorkingStore, evId);
+        if (existingBookings.length + staged.length > plannedLimit) {
+          setupStagedUnassignedBookings.delete(evId);
+          renderSetupView();
+          return;
+        }
+
+        const custName = getEventCustomerName(setupWorkingStore, ev);
+        const canRestoreAll = staged.every(entry => {
+          const bk = entry && entry.booking;
+          if (!bk || !bk.device_id) return false;
+          const other = getBookingsForDevice(setupWorkingStore, bk.device_id, bk.id);
+          return !evaluateBookingDateConflicts(other, ev.out_date, ev.due_date, setupWorkingStore).hasConflict;
+        });
+
+        if (!canRestoreAll) {
+          setupStagedUnassignedBookings.delete(evId);
+          renderSetupView();
+          return;
+        }
+
+        const nextBookings = setupWorkingStore.bookings.slice();
+        staged
+          .slice()
+          .sort((a, b) => a.index - b.index)
+          .forEach(entry => {
+            const restored = (
+              entry.booking.customer_id === ev.customer_id &&
+              entry.booking.customer === custName &&
+              entry.booking.event === ev.name &&
+              entry.booking.out_date === ev.out_date &&
+              entry.booking.due_date === ev.due_date
+            )
+              ? entry.booking
+              : {
+                  ...entry.booking,
+                  customer_id: ev.customer_id,
+                  customer: custName,
+                  event: ev.name,
+                  out_date: ev.out_date,
+                  due_date: ev.due_date
+                };
+            const insertAt = Math.max(0, Math.min(nextBookings.length, entry.index));
+            nextBookings.splice(insertAt, 0, restored);
+          });
+
+        setupWorkingStore.bookings = nextBookings;
+        setupStagedUnassignedBookings.delete(evId);
+
+        if (JSON.stringify(setupWorkingStore) === JSON.stringify(globalStore)) {
+          setSetupClean();
+        } else {
+          setSetupDirty();
+        }
+        renderSetupView();
+      }
+    }
+
     function handleDeleteEvent(evId) {
       if (!setupWorkingStore || !evId) return;
       if (getBookingsForEvent(setupWorkingStore, evId).length > 0) return;
+      setupStagedUnassignedBookings.delete(evId);
       setupWorkingStore.events = (setupWorkingStore.events || []).filter(ev => ev && ev.id !== evId);
       setSetupDirty();
       renderSetupView();
@@ -2607,7 +2644,9 @@
       if (hasUneditedCustomerPlaceholder(setupWorkingStore)) return;
       globalStore = JSON.parse(JSON.stringify(setupWorkingStore));
       saveStore(globalStore);
+      setupStagedUnassignedBookings.clear();
       setSetupClean();
+      renderSetupView();
     }
 
     // Swap Modal
@@ -3178,6 +3217,18 @@
           existing.planned_devices = plannedVal;
           existing.out_date = outVal;
           existing.due_date = dueVal;
+          if (setupStagedUnassignedBookings.has(activeEditEventId)) {
+            const staged = setupStagedUnassignedBookings.get(activeEditEventId);
+            const stillValid = Array.isArray(staged) && staged.length <= plannedVal && staged.every(entry => {
+              const bk = entry && entry.booking;
+              if (!bk || !bk.device_id) return false;
+              const other = getBookingsForDevice(setupWorkingStore, bk.device_id, bk.id);
+              return !evaluateBookingDateConflicts(other, outVal, dueVal, setupWorkingStore).hasConflict;
+            });
+            if (!stillValid) {
+              setupStagedUnassignedBookings.delete(activeEditEventId);
+            }
+          }
           if (Array.isArray(setupWorkingStore.bookings)) {
             setupWorkingStore.bookings.forEach(b => {
               if (b.event_id === activeEditEventId) {
