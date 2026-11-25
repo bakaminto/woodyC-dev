@@ -544,7 +544,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.4";
+    const APP_VERSION = "C01.5";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -4127,7 +4127,7 @@
       const boxEl = cell.querySelector("[data-cal-box]");
       if (boxEl) {
         const boxStateClass = isSelected
-          ? "bg-white border-[6px] border-[#b80000] shadow-sm"
+          ? "bg-[#f5f4f4] border border-transparent shadow-sm"
           : "bg-[#f5f4f4] border border-[#e3e1e1] shadow-xs group-hover:border-[#d5d3d2]";
         boxEl.className = `cal-day-inner flex flex-col items-center justify-center rounded-xl overflow-hidden ${boxStateClass} group-active:scale-95 transition-all`;
       }
@@ -4166,18 +4166,29 @@
       }
     }
 
+    function applyCalendarStripVisual(strip, isSelected) {
+      if (!strip) return;
+      strip.className = isSelected
+        ? "cal-strip-pill group w-full h-full p-[3px] rounded-2xl border border-[#3f3f3f] bg-[#525252] flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]"
+        : "cal-strip-pill group w-full h-full p-[3px] rounded-2xl border border-transparent bg-transparent flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]";
+
+      const custEl = strip.querySelector("[data-strip-cust]");
+      if (custEl) {
+        custEl.className = `w-full px-0.5 text-[10px] font-bold uppercase tracking-wide leading-[11px] mb-[3px] truncate text-center ${isSelected ? "text-white" : "text-[#5d403b]"}`;
+      }
+
+      const bodyEl = strip.querySelector("[data-strip-body]");
+      if (bodyEl) {
+        bodyEl.className = isSelected
+          ? "w-full flex-1 rounded-xl bg-[#eae8e8] border border-transparent shadow-sm pt-1.5 pb-1 px-0.5 flex flex-col items-center justify-start transition-colors"
+          : "w-full flex-1 rounded-xl bg-[#eae8e8] border border-[#dad8d8] group-hover:border-[#c8c5c5] shadow-xs pt-1.5 pb-1 px-0.5 flex flex-col items-center justify-start transition-colors";
+      }
+    }
+
     function updateCalendarSelectedStrip(nextEventId) {
       const strips = document.querySelectorAll("#calendarRollingGrid [data-event-id]");
       strips.forEach(strip => {
-        const isSelected = Boolean(nextEventId && strip.dataset.eventId === nextEventId);
-        const stripSurfaceClass = isSelected
-          ? "bg-[#525252] border-[#3f3f3f] shadow-sm"
-          : "bg-[#eae8e8] border-[#dad8d8] hover:border-[#c8c5c5]";
-        strip.className = `cal-strip-pill group w-full h-full rounded-2xl border ${stripSurfaceClass} pt-1.5 pb-1 px-0.5 flex flex-col items-center justify-start cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]`;
-        const custEl = strip.querySelector("[data-strip-cust]");
-        if (custEl) {
-          custEl.className = `w-full px-0.5 text-[9px] font-bold uppercase tracking-tight leading-[11px] mb-1 truncate text-center ${isSelected ? "text-white" : "text-[#5d403b]"}`;
-        }
+        applyCalendarStripVisual(strip, Boolean(nextEventId && strip.dataset.eventId === nextEventId));
       });
     }
 
@@ -4344,17 +4355,13 @@
         strip.onclick = () => handleCalendarEventChipClick(ev.id);
         strip.style.gridColumn = `${laneIdx + 2}`;
         strip.style.gridRow = `${startRow + 1} / ${endRow + 2}`;
-
-        const stripSurfaceClass = isSelectedEvent
-          ? "bg-[#525252] border-[#3f3f3f] shadow-sm"
-          : "bg-[#eae8e8] border-[#dad8d8] hover:border-[#c8c5c5]";
-        const stripCustColor = isSelectedEvent ? "text-white" : "text-[#5d403b]";
-
-        strip.className = `cal-strip-pill group w-full h-full rounded-2xl border ${stripSurfaceClass} pt-1.5 pb-1 px-0.5 flex flex-col items-center justify-start cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]`;
         strip.innerHTML = `
-          <span data-strip-cust class="w-full px-0.5 text-[9px] font-bold uppercase tracking-tight leading-[11px] mb-1 truncate text-center ${stripCustColor}">${custShort ? escapeHtml(custShort) : "&nbsp;"}</span>
-          <span class="inline-flex items-center justify-center min-w-[24px] px-1.5 py-0.5 rounded-full bg-white text-[#b80000] shadow-xs text-[11px] font-bold leading-none tabular-nums">${countLabel}</span>
+          <span data-strip-cust>${custShort ? escapeHtml(custShort) : "&nbsp;"}</span>
+          <div data-strip-body>
+            <span class="inline-flex items-center justify-center min-w-[26px] max-w-full h-[22px] px-1.5 rounded-full bg-white text-[#b80000] shadow-xs text-sm font-bold leading-none tabular-nums">${countLabel}</span>
+          </div>
         `;
+        applyCalendarStripVisual(strip, isSelectedEvent);
         frag.appendChild(strip);
       });
 
