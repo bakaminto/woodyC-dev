@@ -100,8 +100,9 @@
 
     .cal-vertical-grid {
       display: grid;
-      row-gap: 8px;
+      row-gap: 6px;
       column-gap: 4px;
+      grid-auto-rows: 26px 48px;
       align-items: stretch;
       width: 100%;
     }
@@ -110,6 +111,7 @@
       width: 72px;
       height: 80px;
       min-width: 0;
+      justify-self: start;
       scroll-snap-align: center;
       box-sizing: border-box;
     }
@@ -544,7 +546,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.5";
+    const APP_VERSION = "C01.6";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -3355,15 +3357,30 @@
       return dueIds;
     }
 
-    function assignCalendarEventLanes(sortedEvents) {
+    function getCalendarEventHalfDaySpan(ev, startDate, totalDays) {
+      if (!ev || !ev.out_date || !ev.due_date || !startDate || totalDays <= 0) return null;
+      const startDt = parseDateKey(ev.out_date);
+      const endDt = parseDateKey(ev.due_date);
+      if (!startDt || !endDt) return null;
+      const startDay = Math.max(0, Math.min(totalDays - 1, diffCalendarDaysLocal(startDt, startDate)));
+      const endDay = Math.max(startDay, Math.min(totalDays - 1, diffCalendarDaysLocal(endDt, startDate)));
+      const isSingleDay = ev.out_date === ev.due_date;
+      const startSlot = isSingleDay ? (startDay * 2) : (startDay * 2 + 1);
+      const endSlot = isSingleDay ? (startDay * 2 + 1) : (endDay * 2);
+      return { startSlot, endSlot };
+    }
+
+    function assignCalendarEventLanes(sortedEvents, startDate, totalDays) {
       const laneIntervals = [];
       const placed = [];
       (sortedEvents || []).forEach(ev => {
         if (!ev || !ev.out_date || !ev.due_date) return;
+        const span = getCalendarEventHalfDaySpan(ev, startDate, totalDays);
+        if (!span) return;
         let laneIdx = -1;
         for (let i = 0; i < laneIntervals.length; i++) {
           const overlaps = laneIntervals[i].some(
-            item => item.out_date <= ev.due_date && ev.out_date <= item.due_date
+            item => item.startSlot <= span.endSlot && span.startSlot <= item.endSlot
           );
           if (!overlaps) {
             laneIdx = i;
@@ -3374,8 +3391,8 @@
           laneIdx = laneIntervals.length;
           laneIntervals.push([]);
         }
-        laneIntervals[laneIdx].push({ out_date: ev.out_date, due_date: ev.due_date });
-        placed.push({ ev, laneIdx });
+        laneIntervals[laneIdx].push(span);
+        placed.push({ ev, laneIdx, startSlot: span.startSlot, endSlot: span.endSlot });
       });
       return { placed, usedLanes: laneIntervals.length };
     }
@@ -4157,13 +4174,6 @@
       if (nextEl) {
         applyCalendarDayBadgeVisual(nextEl, true);
       }
-      const guideEl = document.getElementById("calSelectedGuide");
-      if (guideEl && nextEl && nextEl.style && nextEl.style.gridRow) {
-        guideEl.style.gridRow = nextEl.style.gridRow;
-        guideEl.classList.remove("hidden");
-      } else if (guideEl) {
-        guideEl.classList.add("hidden");
-      }
     }
 
     function applyCalendarStripVisual(strip, isSelected) {
@@ -4238,7 +4248,7 @@
       const sortedEvents = allEvents
         .filter(ev => ev && ev.out_date && ev.due_date && ev.due_date >= ev.out_date)
         .sort((a, b) => compareCalendarEventsStripOrder(globalStore, a, b, overdueEventSet));
-      const { placed, usedLanes } = assignCalendarEventLanes(sortedEvents);
+      const { placed, usedLanes } = assignCalendarEventLanes(sortedEvents, startDate, totalDays);
       const laneCount = Math.max(6, usedLanes);
 
       calendarDayGridMeta = { startDate, totalDays, todayKey, laneCount };
@@ -4246,12 +4256,12 @@
         calendarSelectedDateKey = formatDateInputValue(selectedDate);
       }
 
-      container.style.gridTemplateColumns = `72px repeat(${laneCount}, minmax(0, 1fr))`;
+      container.style.gridTemplateColumns = `80px repeat(${laneCount}, minmax(0, 1fr))`;
       container.style.columnGap = laneCount >= 8 ? "3px" : "4px";
-      container.style.gridAutoRows = "80px";
+      container.style.rowGap = "6px";
+      container.style.gridAutoRows = "26px 48px";
 
       const frag = document.createDocumentFragment();
-      let selectedRowNum = null;
 
       for (let dayIdx = 0; dayIdx < totalDays; dayIdx++) {
         const cellDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + dayIdx);
@@ -4266,10 +4276,6 @@
         const isSelectedDay = calendarSelectedDateKey === dateKey;
         const isFirstOfMonth = (cellDate.getDate() === 1);
 
-        if (isSelectedDay) {
-          selectedRowNum = dayIdx + 1;
-        }
-
         const lzInfo = getTypeDayInfo(outSet, lzAllIds, lzActiveIds);
         const llInfo = getTypeDayInfo(outSet, llAllIds, llActiveIds);
         const lzGrey = isSettledPastLook || (lzInfo.outCount === 0 && lzInfo.officeCount === 0);
@@ -4277,11 +4283,13 @@
         const lzSeg = getMergedSegmentCounts(lzInfo.outCount, lzInfo.officeCount);
         const llSeg = getMergedSegmentCounts(llInfo.outCount, llInfo.officeCount);
 
+        const dayGridRowSpan = `${dayIdx * 2 + 1} / ${dayIdx * 2 + 3}`;
+
         if (isToday) {
           const todayGuide = document.createElement("div");
           todayGuide.setAttribute("aria-hidden", "true");
           todayGuide.style.gridColumn = `2 / ${laneCount + 2}`;
-          todayGuide.style.gridRow = `${dayIdx + 1}`;
+          todayGuide.style.gridRow = dayGridRowSpan;
           todayGuide.className = "cal-row-guide border border-[#e3e1e1]/70 bg-[#f5f4f4]/60";
           frag.appendChild(todayGuide);
         }
@@ -4295,7 +4303,7 @@
         cell.dataset.calToday = isToday ? "1" : "0";
         cell.dataset.calFirst = isFirstOfMonth ? "1" : "0";
         cell.style.gridColumn = "1";
-        cell.style.gridRow = `${dayIdx + 1}`;
+        cell.style.gridRow = dayGridRowSpan;
 
         const dPad = cellDate.getDate() < 10 ? `0${cellDate.getDate()}` : `${cellDate.getDate()}`;
         const mPad = (cellDate.getMonth() + 1) < 10 ? `0${cellDate.getMonth() + 1}` : `${cellDate.getMonth() + 1}`;
@@ -4317,28 +4325,7 @@
         frag.appendChild(cell);
       }
 
-      const selectedGuide = document.createElement("div");
-      selectedGuide.id = "calSelectedGuide";
-      selectedGuide.setAttribute("aria-hidden", "true");
-      selectedGuide.style.gridColumn = `2 / ${laneCount + 2}`;
-      if (selectedRowNum) {
-        selectedGuide.style.gridRow = `${selectedRowNum}`;
-        selectedGuide.className = "cal-row-guide border border-[#b80000]/20 bg-[#b80000]/[0.04]";
-      } else {
-        selectedGuide.className = "cal-row-guide border border-[#b80000]/20 bg-[#b80000]/[0.04] hidden";
-      }
-      frag.appendChild(selectedGuide);
-
-      placed.forEach(({ ev, laneIdx }) => {
-        const startDt = parseDateKey(ev.out_date);
-        const endDt = parseDateKey(ev.due_date);
-        if (!startDt || !endDt) return;
-
-        const rawStartRow = diffCalendarDaysLocal(startDt, startDate);
-        const rawEndRow = diffCalendarDaysLocal(endDt, startDate);
-        const startRow = Math.max(0, Math.min(totalDays - 1, rawStartRow));
-        const endRow = Math.max(startRow, Math.min(totalDays - 1, rawEndRow));
-
+      placed.forEach(({ ev, laneIdx, startSlot, endSlot }) => {
         const deviceCount = getBookingsForEvent(globalStore, ev.id).length;
         const countLabel = String(deviceCount).padStart(2, "0");
         const isSelectedEvent = calendarSelectedEventId === ev.id;
@@ -4354,7 +4341,7 @@
         strip.setAttribute("aria-label", `${titleLabel}, ${countLabel} devices, ${ev.out_date} to ${ev.due_date}`);
         strip.onclick = () => handleCalendarEventChipClick(ev.id);
         strip.style.gridColumn = `${laneIdx + 2}`;
-        strip.style.gridRow = `${startRow + 1} / ${endRow + 2}`;
+        strip.style.gridRow = `${startSlot + 1} / ${endSlot + 2}`;
         strip.innerHTML = `
           <span data-strip-cust>${custShort ? escapeHtml(custShort) : "&nbsp;"}</span>
           <div data-strip-body>
@@ -4432,7 +4419,7 @@
       if (!firstBadge) return;
 
       const computedStyle = window.getComputedStyle ? window.getComputedStyle(gridEl) : null;
-      const rowGap = computedStyle ? (parseFloat(computedStyle.rowGap) || 8) : 8;
+      const rowGap = computedStyle ? (parseFloat(computedStyle.rowGap) || 6) : 6;
       const rowHeight = firstBadge.offsetHeight || 80;
       const rowStride = rowHeight + rowGap;
 
