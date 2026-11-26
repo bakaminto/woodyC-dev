@@ -67,6 +67,11 @@
       scroll-snap-type: x mandatory;
     }
 
+    #calendarEventsTrack {
+      overscroll-behavior-x: contain;
+      touch-action: manipulation;
+    }
+
     .timeline-day-spacer {
       flex: 0 0 auto;
       width: calc(50% - 38px);
@@ -227,7 +232,7 @@
   <main class="flex-1 w-full pt-[110px] px-3 overflow-y-auto overscroll-contain">
 
     <!-- VIEW 1A: GRID VIEW -->
-    <section id="viewGrid" class="hidden pb-[calc(106px+env(safe-area-inset-bottom,0px))] max-w-md mx-auto w-full">
+    <section id="viewGrid" class="hidden pb-[calc(210px+env(safe-area-inset-bottom,0px))] max-w-md mx-auto w-full">
       <div class="flex flex-col w-full">
         <!-- 5 Columns Device Rack Grid (matches Calendar Screen dimensions) -->
         <div class="grid grid-cols-5 gap-2.5 w-full" id="gridContainer"></div>
@@ -353,21 +358,24 @@
 
   </main>
 
-  <!-- ==================== TIMELINE FOOTER (FIXED BOTTOM HORIZONTAL DATE CAROUSEL) ==================== -->
-  <footer id="timelineFooter"
-    class="fixed bottom-0 inset-x-0 z-40 bg-[#fbf9f9] border-t border-[#e9e8e7] px-3 pt-1 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] shadow-lg select-none hidden">
-    <div id="timelineFooterInner" class="max-w-md mx-auto">
-      <!-- Scrollable center-snapped day badges matching Calendar event badge frame -->
-      <div id="timelineDaysContainer" tabindex="0" role="region" aria-label="Date timeline"
-        class="relative h-[88px] flex items-center gap-0.5 overflow-x-auto no-scrollbar snap-x snap-mandatory focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000] rounded-xl"></div>
-    </div>
-  </footer>
-
-  <!-- ==================== CALENDAR EVENT FOOTER (FIXED BOTTOM) ==================== -->
-  <footer id="calendarFooter"
+  <!-- ==================== SHARED FIXED BOTTOM FOOTER (DAYS + EVENTS) ==================== -->
+  <footer id="appBottomFooter"
     class="fixed bottom-0 inset-x-0 z-40 bg-[#fbf9f9] border-t border-[#e9e8e7] px-3 pt-1 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] shadow-lg select-none">
-    <div class="max-w-md mx-auto">
-      <div id="calendarEventsTrack" class="relative h-[88px] flex items-center gap-2.5 overflow-x-auto no-scrollbar px-0.5"></div>
+    <div class="max-w-md mx-auto flex flex-col gap-1.5">
+      <!-- Row 1 (Grid & List): Horizontal Day Carousel -->
+      <div id="timelineFooter" class="hidden">
+        <div id="timelineFooterInner">
+          <!-- Scrollable center-snapped day badges matching Calendar event badge frame -->
+          <div id="timelineDaysContainer" tabindex="0" role="region" aria-label="Date timeline"
+            class="relative h-[88px] flex items-center gap-0.5 overflow-x-auto no-scrollbar snap-x snap-mandatory focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000] rounded-xl"></div>
+        </div>
+      </div>
+
+      <!-- Row 2 (Grid & Calendar): Horizontal Event Carousel -->
+      <div id="calendarFooter">
+        <div id="calendarEventsTrack" role="region" aria-label="Events timeline"
+          class="relative h-[88px] flex items-center gap-2.5 overflow-x-auto no-scrollbar px-0.5"></div>
+      </div>
     </div>
   </footer>
 
@@ -581,7 +589,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C02.2";
+    const APP_VERSION = "C02.3";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -1154,10 +1162,15 @@
       const prevView = currentView;
       currentView = viewName;
 
-      // Handle footer visibility: timelineFooter on Grid/List, calendarFooter on Calendar, hidden on Detail/Setup
+      // Handle footer visibility: Days (Grid/List) + Events (Grid/Calendar), hidden on Detail/Setup
+      const appBottomFooter = document.getElementById("appBottomFooter");
       const timelineFooter = document.getElementById("timelineFooter");
       const timelineFooterInner = document.getElementById("timelineFooterInner");
       const calendarFooter = document.getElementById("calendarFooter");
+      const showBottomFooter = (viewName === "grid" || viewName === "list" || viewName === "calendar");
+      if (appBottomFooter) {
+        appBottomFooter.classList.toggle("hidden", !showBottomFooter);
+      }
       if (timelineFooter) {
         if (viewName === "grid" || viewName === "list") {
           timelineFooter.classList.remove("hidden");
@@ -1167,7 +1180,11 @@
         }
       }
       if (calendarFooter) {
-        calendarFooter.classList.toggle("hidden", viewName !== "calendar");
+        const showEventsRow = (viewName === "grid" || viewName === "calendar");
+        calendarFooter.classList.toggle("hidden", !showEventsRow);
+        calendarFooter.classList.toggle("border-t", viewName === "grid");
+        calendarFooter.classList.toggle("border-[#e9e8e7]", viewName === "grid");
+        calendarFooter.classList.toggle("pt-1.5", viewName === "grid");
       }
 
       ["viewGrid", "viewList", "viewCalendar", "viewDetail", "viewSetup"].forEach(id => {
@@ -1207,12 +1224,25 @@
 
         const mainEl = document.querySelector("main");
         if (viewName === "grid") {
+          const selKey = formatDateInputValue(selectedDate);
+          calendarSelectedDateKey = selKey;
+          if (calendarSelectedEventId) {
+            const activeEv = findEventById(globalStore, calendarSelectedEventId);
+            if (!activeEv || !activeEv.out_date || !activeEv.due_date || activeEv.out_date > selKey || selKey > activeEv.due_date) {
+              calendarSelectedEventId = null;
+            }
+          }
+          const evScrollMode = calendarSelectedEventId ? "intoView" : "start";
           tabGrid.className = "px-3.5 h-7 rounded-xl text-xs font-bold bg-white text-[#b80000] shadow-sm transition-all cursor-pointer flex items-center justify-center";
           updateHeaderCenterBadge();
           document.getElementById("viewGrid").classList.remove("hidden");
           renderGridView();
+          renderCalendarEventFooter(evScrollMode);
           updateTimelineFooter();
-          requestAnimationFrame(() => scrollTimelineToDate(selectedDate, false));
+          requestAnimationFrame(() => {
+            renderCalendarEventFooter(evScrollMode);
+            scrollTimelineToDate(selectedDate, false);
+          });
           if (mainEl) mainEl.scrollTop = 0;
         } else if (viewName === "list") {
           tabList.className = "px-3.5 h-7 rounded-xl text-xs font-bold bg-white text-[#b80000] shadow-sm transition-all cursor-pointer flex items-center justify-center";
@@ -3868,7 +3898,11 @@
       calendarStartupLocked = false;
       if (calendarSelectedEventId === evId) {
         calendarSelectedEventId = null;
-        updateCalendarSelectedStrip(null);
+        if (currentView === "calendar") {
+          updateCalendarSelectedStrip(null);
+        } else if (currentView === "grid") {
+          renderGridView();
+        }
         renderCalendarEventFooter("preserve");
         return;
       }
@@ -3886,14 +3920,23 @@
         const outDt = parseDateKey(ev.out_date);
         if (outDt) {
           selectedDate = outDt;
-          updateCalendarSelectedDay(ev.out_date);
-          renderHeaderCalendarBadge(outDt.getFullYear(), outDt.getMonth());
-          updateTimelineFooter({ skipScroll: true });
-          scrollCalendarToDate(outDt, true);
+          calendarSelectedDateKey = ev.out_date;
+          if (currentView === "calendar") {
+            updateCalendarSelectedDay(ev.out_date);
+            renderHeaderCalendarBadge(outDt.getFullYear(), outDt.getMonth());
+            updateTimelineFooter({ skipScroll: true });
+            scrollCalendarToDate(outDt, true);
+          } else {
+            updateTimelineFooter({ smooth: true });
+          }
         }
       }
 
-      updateCalendarSelectedStrip(evId);
+      if (currentView === "calendar") {
+        updateCalendarSelectedStrip(evId);
+      } else if (currentView === "grid") {
+        renderGridView();
+      }
       renderCalendarEventFooter("intoView");
     }
 
@@ -4292,11 +4335,22 @@
       const parsed = parseDateKey(closestKey);
       if (!parsed) return;
       selectedDate = parsed;
-      updateTimelineFooter({ skipScroll: true });
       if (currentView === "grid") {
+        calendarSelectedDateKey = closestKey;
+        if (calendarSelectedEventId) {
+          const activeEv = findEventById(globalStore, calendarSelectedEventId);
+          if (!activeEv || !activeEv.out_date || !activeEv.due_date || activeEv.out_date > closestKey || closestKey > activeEv.due_date) {
+            calendarSelectedEventId = null;
+          }
+        }
+        updateTimelineFooter({ skipScroll: true });
+        renderCalendarEventFooter("start");
         renderGridView();
-      } else if (currentView === "list") {
-        renderListView();
+      } else {
+        updateTimelineFooter({ skipScroll: true });
+        if (currentView === "list") {
+          renderListView();
+        }
       }
     }
 
@@ -4401,12 +4455,25 @@
     function selectDay(date, smoothScroll = false) {
       timelineStartupLocked = false;
       selectedDate = new Date(date);
+      const dateKey = formatDateInputValue(selectedDate);
+      if (currentView === "grid" || currentView === "calendar") {
+        calendarSelectedDateKey = dateKey;
+        if (calendarSelectedEventId) {
+          const activeEv = findEventById(globalStore, calendarSelectedEventId);
+          if (!activeEv || !activeEv.out_date || !activeEv.due_date || activeEv.out_date > dateKey || dateKey > activeEv.due_date) {
+            calendarSelectedEventId = null;
+            if (currentView === "calendar") updateCalendarSelectedStrip(null);
+          }
+        }
+      }
       updateTimelineFooter({ smooth: smoothScroll });
       if (currentView === "calendar") {
         renderCalendarView();
+        renderCalendarEventFooter("start");
         scrollCalendarToDate(selectedDate, false);
       } else if (currentView === "grid") {
         renderGridView();
+        renderCalendarEventFooter("start");
       } else if (currentView === "list") {
         renderListView();
       }
@@ -4512,7 +4579,7 @@
 
     function getCalendarVisibleBounds() {
       const headerEl = document.querySelector("header");
-      const footerEl = document.getElementById("calendarFooter");
+      const footerEl = document.getElementById("appBottomFooter") || document.getElementById("calendarFooter");
       const rawHeaderBottom = headerEl ? headerEl.getBoundingClientRect().bottom : 0;
       const headerBottom = rawHeaderBottom > 0 ? rawHeaderBottom : 97;
       const footerRect = footerEl ? footerEl.getBoundingClientRect() : null;
