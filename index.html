@@ -581,7 +581,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.9";
+    const APP_VERSION = "C02.1";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -786,6 +786,22 @@
 
     function hasDeviceBlockingBookings(store, deviceId) {
       return getBookingsForDevice(store, deviceId).length > 0;
+    }
+
+    function hasCustomerBlockingBookings(store, custId) {
+      if (!store || !custId) return false;
+      const cust = findCustomerById(store, custId);
+      const custNameUpper = cust ? (cust.name || "").trim().toUpperCase() : "";
+      return (store.bookings || []).some(b => {
+        if (!b) return false;
+        const ev = b.event_id ? findEventById(store, b.event_id) : null;
+        if (ev) {
+          if (ev.customer_id) return ev.customer_id === custId;
+          return Boolean(custNameUpper && (ev.customer || "").trim().toUpperCase() === custNameUpper);
+        }
+        if (b.customer_id) return b.customer_id === custId;
+        return Boolean(custNameUpper && (b.customer || "").trim().toUpperCase() === custNameUpper);
+      });
     }
 
     function getDeviceViewStateOnDate(store, dev, dateKey, todayKey = null) {
@@ -2032,17 +2048,11 @@
     }
 
     // Setup View
-    function hasUneditedCustomerPlaceholder(store) {
-      const target = store || setupWorkingStore;
-      if (!target) return false;
-      return (target.customers || []).some(c => (c.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME);
-    }
-
     function updateSetupSaveButton() {
       const btnSave = document.getElementById("btnHeaderSave");
       if (!btnSave) return;
       btnSave.onclick = commitSetupSave;
-      const canSave = isSetupDirty && !hasUneditedCustomerPlaceholder(setupWorkingStore);
+      const canSave = isSetupDirty;
       if (canSave) {
         btnSave.disabled = false;
         btnSave.className = "px-5 py-2 bg-[#b80000] hover:bg-[#8b0000] text-white font-bold text-sm rounded-xl cursor-pointer shadow-sm transition-all shrink-0";
@@ -2057,16 +2067,10 @@
       if (!btnAdd) return;
       const isCustomerTab = setupActiveTab === "customers";
       const isEventTab = setupActiveTab === "events";
-      const isBlocked = isCustomerTab && hasUneditedCustomerPlaceholder(setupWorkingStore);
 
       btnAdd.setAttribute("aria-label", isEventTab ? "Add Event" : (isCustomerTab ? "Add Customer" : "Add Device"));
-      if (isBlocked) {
-        btnAdd.disabled = true;
-        btnAdd.className = "w-14 h-14 bg-[#efeded] text-[#5d403b]/40 rounded-2xl flex items-center justify-center shadow-sm cursor-not-allowed transition-all";
-      } else {
-        btnAdd.disabled = false;
-        btnAdd.className = "w-14 h-14 bg-[#b80000] text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-95 transition-transform cursor-pointer";
-      }
+      btnAdd.disabled = false;
+      btnAdd.className = "w-14 h-14 bg-[#b80000] text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-95 transition-transform cursor-pointer";
     }
 
     function updateSetupTransferFabState() {
@@ -2082,7 +2086,7 @@
     }
 
     function hasSetupPendingChanges() {
-      return isSetupDirty || hasUneditedCustomerPlaceholder(setupWorkingStore);
+      return isSetupDirty;
     }
 
     function updateSetupTabToggleState() {
@@ -2237,7 +2241,7 @@
 
             const devType = dev.type === "LL" ? "LL" : "LZ";
             let toggleHtml = `<div class="w-11 h-6 shrink-0"></div>`;
-            if (!hasBlockingBooking) {
+            if (!(hasBlockingBooking && dev.is_active)) {
               toggleHtml = `
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                   <input type="checkbox" ${dev.is_active ? "checked" : ""} class="sr-only peer" onchange="handleSetupDeviceActiveToggle('${dev.id}', this.checked)">
@@ -2252,7 +2256,7 @@
                 ? `(DUE) ${escapeHtml(getBookingCustomerName(setupWorkingStore, todayState.booking))} • ${escapeHtml(getBookingEventName(setupWorkingStore, todayState.booking))}`
                 : (hasBlockingBooking ? "Booked upcoming" : (isInactive ? "Inactive" : "Available")));
 
-            card.className = "w-full bg-white rounded-xl p-3 shadow-sm flex items-center justify-between gap-2";
+            card.className = "w-full bg-white rounded-xl p-3 shadow-sm flex items-center justify-between gap-2 scroll-mt-[170px] scroll-mb-28";
             card.innerHTML = `
               <div class="flex items-center gap-3 min-w-0 flex-1">
                 <button type="button" onclick="openSwapModal(${slot.slot_number})" class="w-14 h-[44px] rounded-xl flex flex-col items-center justify-center shrink-0 cursor-pointer active:scale-95 transition-transform select-none" style="background-color: ${badgeBg}; color: ${badgeText};">
@@ -2565,6 +2569,7 @@
       customers.forEach(cust => {
         const isPlaceholder = (cust.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME;
         const isActive = Boolean(cust.is_active);
+        const hasBlockingBooking = !isPlaceholder && hasCustomerBlockingBookings(setupWorkingStore, cust.id);
         const shortLabel = isPlaceholder
           ? ""
           : (normalizeCustomerShortLabel(cust.short_label) || resolveUniqueCustomerShortLabel(setupWorkingStore.customers, cust.name, "", cust.id));
@@ -2583,15 +2588,22 @@
           ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded ${shortBadgeClass} text-[11px] font-bold font-code tracking-wider shrink-0">${escapeHtml(shortLabel)}</span>`
           : "";
 
+        let toggleHtml = `<div class="w-11 h-6 shrink-0"></div>`;
+        if (!(hasBlockingBooking && isActive)) {
+          toggleHtml = `
+            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+              <input type="checkbox" ${isActive ? "checked" : ""} aria-label="Toggle active status for ${escapeHtml(cust.name)}" class="sr-only peer" onchange="handleSetupCustomerActiveToggle('${cust.id}', this.checked)">
+              <div class="w-11 h-6 bg-[#dbdad9] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#b80000]"></div>
+            </label>
+          `;
+        }
+
         card.innerHTML = `
           <button type="button" onclick="openCustomerRenameModal('${cust.id}')" class="flex items-center gap-2 min-w-0 flex-1 text-left group cursor-pointer">
             <span class="text-sm font-semibold ${nameColorClass} group-hover:underline truncate">${escapeHtml(cust.name)}</span>
             ${shortBadgeHtml}
           </button>
-          <label class="relative inline-flex items-center cursor-pointer shrink-0">
-            <input type="checkbox" ${isActive ? "checked" : ""} class="sr-only peer" onchange="handleSetupCustomerActiveToggle('${cust.id}', this.checked)">
-            <div class="w-11 h-6 bg-[#dbdad9] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#b80000]"></div>
-          </label>
+          ${toggleHtml}
         `;
         container.appendChild(card);
       });
@@ -2601,6 +2613,7 @@
       if (!setupWorkingStore) return;
       const target = (setupWorkingStore.customers || []).find(c => c.id === custId);
       if (target) {
+        if (!isChecked && hasCustomerBlockingBookings(setupWorkingStore, custId)) return;
         target.is_active = isChecked;
         setSetupDirty();
         renderSetupCustomersView();
@@ -2614,24 +2627,7 @@
       if (!Array.isArray(setupWorkingStore.customers)) {
         setupWorkingStore.customers = [];
       }
-      if (hasUneditedCustomerPlaceholder(setupWorkingStore)) return;
-
-      const newCustId = `cust_${Date.now()}_${setupWorkingStore.customers.length + 1}`;
-      setupWorkingStore.customers.push({
-        id: newCustId,
-        name: CUSTOMER_PLACEHOLDER_NAME,
-        short_label: "",
-        is_active: true
-      });
-
-      renderSetupView();
-
-      setTimeout(() => {
-        const targetCard = document.getElementById(`setup_cust_${newCustId}`);
-        if (targetCard) {
-          targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-      }, 100);
+      openCustomerRenameModal(null);
     }
 
     function toggleSetupGroup(id, btn) {
@@ -2653,11 +2649,14 @@
     function handleSetupDeviceActiveToggle(devId, isChecked) {
       const target = setupWorkingStore.devices.find(d => d.id === devId);
       if (target) {
+        if (!isChecked && hasDeviceBlockingBookings(setupWorkingStore, devId)) return;
         target.is_active = isChecked;
         setSetupDirty();
         renderSetupView();
       }
     }
+
+    let setupAddDeviceScrollTimer = null;
 
     function handleAddDevice() {
       if (!setupWorkingStore) {
@@ -2690,12 +2689,19 @@
         setSetupDirty();
         renderSetupView();
 
-        setTimeout(() => {
-          const targetCard = document.getElementById(`setup_card_slot_${targetSlot.slot_number}`);
-          if (targetCard) {
-            targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        }, 100);
+        if (setupAddDeviceScrollTimer) {
+          clearTimeout(setupAddDeviceScrollTimer);
+          setupAddDeviceScrollTimer = null;
+        }
+        setupAddDeviceScrollTimer = setTimeout(() => {
+          setupAddDeviceScrollTimer = null;
+          requestAnimationFrame(() => {
+            const targetCard = document.getElementById(`setup_row_${newDevId}`);
+            if (targetCard) {
+              targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          });
+        }, 80);
       }
     }
 
@@ -2740,7 +2746,6 @@
     }
 
     function commitSetupSave() {
-      if (hasUneditedCustomerPlaceholder(setupWorkingStore)) return;
       globalStore = JSON.parse(JSON.stringify(setupWorkingStore));
       saveStore(globalStore);
       setupStagedUnassignedBookings.clear();
@@ -2844,13 +2849,16 @@
       setTimeout(() => input.focus(), 50);
     }
 
-    function openCustomerRenameModal(custId) {
+    function openCustomerRenameModal(custId = null) {
       activeRenameMode = "customer";
-      activeRenameCustomerId = custId;
+      activeRenameCustomerId = custId || null;
       activeRenameDeviceId = null;
-      const cust = (setupWorkingStore.customers || []).find(c => c.id === custId);
-      const isPlaceholder = cust && (cust.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME;
-      document.getElementById("renameModalTitle").textContent = isPlaceholder ? "Add Customer" : "Edit Customer";
+      const cust = activeRenameCustomerId
+        ? (setupWorkingStore.customers || []).find(c => c.id === activeRenameCustomerId)
+        : null;
+      const isAdding = !cust;
+      const isPlaceholder = Boolean(cust && (cust.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME);
+      document.getElementById("renameModalTitle").textContent = (isAdding || isPlaceholder) ? "Add Customer" : "Edit Customer";
       document.getElementById("renameNameLabel").textContent = "Customer Name";
       document.getElementById("customerShortLabelGroup").classList.remove("hidden");
       const input = document.getElementById("inputRename");
@@ -2861,7 +2869,7 @@
       const shortInput = document.getElementById("inputCustomerShortLabel");
       shortInput.value = (!isPlaceholder && cust) ? normalizeCustomerShortLabel(cust.short_label) : "";
       shortInput.setAttribute("aria-invalid", "false");
-      document.getElementById("btnConfirmRename").textContent = isPlaceholder ? "Apply" : "Save";
+      document.getElementById("btnConfirmRename").textContent = isAdding ? "Add" : (isPlaceholder ? "Apply" : "Save");
       validateRenameInput();
       document.getElementById("renameModal").classList.remove("hidden");
       setScrollLock(true);
@@ -3058,13 +3066,19 @@
           if (duplicateShort) return;
         }
 
+        const resolvedShort = desiredShort
+          ? desiredShort
+          : resolveUniqueCustomerShortLabel(setupWorkingStore.customers, newVal, "", activeRenameCustomerId);
+
+        const wasAdd = !activeRenameCustomerId;
+        let targetCustId = activeRenameCustomerId;
+        let changed = false;
+
         if (activeRenameCustomerId) {
           const cust = (setupWorkingStore.customers || []).find(c => c.id === activeRenameCustomerId);
           if (cust) {
             cust.name = newVal;
-            cust.short_label = desiredShort
-              ? desiredShort
-              : resolveUniqueCustomerShortLabel(setupWorkingStore.customers, newVal, "", activeRenameCustomerId);
+            cust.short_label = resolvedShort;
             if (Array.isArray(setupWorkingStore.events)) {
               setupWorkingStore.events.forEach(ev => {
                 if (ev.customer_id === cust.id) {
@@ -3079,11 +3093,36 @@
                 }
               });
             }
-            setSetupDirty();
-            renderSetupView();
+            changed = true;
           }
+        } else {
+          if (!Array.isArray(setupWorkingStore.customers)) {
+            setupWorkingStore.customers = [];
+          }
+          targetCustId = `cust_${Date.now()}_${setupWorkingStore.customers.length + 1}`;
+          setupWorkingStore.customers.push({
+            id: targetCustId,
+            name: newVal,
+            short_label: resolvedShort,
+            is_active: true
+          });
+          changed = true;
+        }
+
+        if (changed) {
+          setSetupDirty();
+          renderSetupView();
         }
         closeRenameModal();
+
+        if (wasAdd && targetCustId) {
+          setTimeout(() => {
+            const targetCard = document.getElementById(`setup_cust_${targetCustId}`);
+            if (targetCard) {
+              targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }, 100);
+        }
         return;
       }
 
@@ -4469,7 +4508,7 @@
       return byDay;
     }
 
-    let calendarDayGridMeta = { startDate: null, totalDays: 0, todayKey: "", laneCount: 6 };
+    let calendarDayGridMeta = { startDate: null, totalDays: 0, todayKey: "", laneCount: 7 };
 
     function getCalendarVisibleBounds() {
       const headerEl = document.querySelector("header");
@@ -4571,8 +4610,8 @@
     function applyCalendarStripVisual(strip, isSelected) {
       if (!strip) return;
       strip.className = isSelected
-        ? "cal-strip-pill group w-full h-full p-[3px] rounded-2xl border border-[#3f3f3f] bg-[#525252] flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]"
-        : "cal-strip-pill group w-full h-full p-[3px] rounded-2xl border border-transparent bg-transparent flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]";
+        ? "cal-strip-pill group w-full h-full px-[2px] py-[3px] rounded-2xl border border-[#3f3f3f] bg-[#525252] flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]"
+        : "cal-strip-pill group w-full h-full px-[2px] py-[3px] rounded-2xl border border-transparent bg-transparent flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]";
 
       const custEl = strip.querySelector("[data-strip-cust]");
       if (custEl) {
@@ -4641,7 +4680,7 @@
         .filter(ev => ev && ev.out_date && ev.due_date && ev.due_date >= ev.out_date)
         .sort((a, b) => compareCalendarEventsStripOrder(globalStore, a, b, overdueEventSet));
       const { placed, usedLanes } = assignCalendarEventLanes(sortedEvents, startDate, totalDays);
-      const laneCount = Math.max(6, usedLanes);
+      const laneCount = Math.max(7, usedLanes);
 
       calendarDayGridMeta = { startDate, totalDays, todayKey, laneCount };
       if (!calendarSelectedDateKey) {
@@ -4649,7 +4688,7 @@
       }
 
       container.style.gridTemplateColumns = `80px repeat(${laneCount}, minmax(0, 1fr))`;
-      container.style.columnGap = laneCount >= 8 ? "3px" : "4px";
+      container.style.columnGap = laneCount >= 7 ? "3px" : "4px";
       container.style.rowGap = "6px";
       container.style.gridAutoRows = "26px 48px";
 
@@ -4739,7 +4778,7 @@
         strip.innerHTML = `
           <span data-strip-cust>${custShort ? escapeHtml(custShort) : "&nbsp;"}</span>
           <div data-strip-body>
-            <div class="inline-flex flex-col items-center justify-center min-w-[26px] max-w-full px-1.5 py-1 rounded-xl bg-white text-[#b80000] shadow-xs tabular-nums">
+            <div class="inline-flex flex-col items-center justify-center min-w-[22px] max-w-full px-1 py-1 rounded-xl bg-white text-[#b80000] shadow-xs tabular-nums">
               <span class="text-xs font-bold leading-none">${actualLabel}</span>
               <span aria-hidden="true" class="w-4 h-[1px] bg-[#dad8d8] my-[2px]"></span>
               <span class="text-xs font-bold leading-none">${plannedLabel}</span>
