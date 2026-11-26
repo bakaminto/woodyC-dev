@@ -581,7 +581,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C02.1";
+    const APP_VERSION = "C02.2";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -4610,19 +4610,19 @@
     function applyCalendarStripVisual(strip, isSelected) {
       if (!strip) return;
       strip.className = isSelected
-        ? "cal-strip-pill group w-full h-full px-[2px] py-[3px] rounded-2xl border border-[#3f3f3f] bg-[#525252] flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]"
-        : "cal-strip-pill group w-full h-full px-[2px] py-[3px] rounded-2xl border border-transparent bg-transparent flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]";
+        ? "cal-strip-pill group w-full h-full px-[1px] py-[3px] rounded-2xl border border-[#3f3f3f] bg-[#525252] flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]"
+        : "cal-strip-pill group w-full h-full px-[1px] py-[3px] rounded-2xl border border-transparent bg-transparent flex flex-col items-center cursor-pointer select-none transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000]";
 
       const custEl = strip.querySelector("[data-strip-cust]");
       if (custEl) {
-        custEl.className = `w-full px-0.5 text-[10px] font-bold uppercase tracking-wider leading-[11px] mb-[3px] truncate text-center ${isSelected ? "text-white" : "text-[#5d403b]"}`;
+        custEl.className = `w-full px-[1px] text-[10px] font-bold uppercase tracking-wider leading-[11px] mb-[3px] truncate text-center ${isSelected ? "text-white" : "text-[#5d403b]"}`;
       }
 
       const bodyEl = strip.querySelector("[data-strip-body]");
       if (bodyEl) {
         bodyEl.className = isSelected
-          ? "w-full flex-1 rounded-xl bg-[#eae8e8] border border-transparent shadow-sm pt-1.5 pb-1 px-0.5 flex flex-col items-center justify-start transition-colors"
-          : "w-full flex-1 rounded-xl bg-[#eae8e8] border border-[#dad8d8] group-hover:border-[#c8c5c5] shadow-xs pt-1.5 pb-1 px-0.5 flex flex-col items-center justify-start transition-colors";
+          ? "w-full flex-1 rounded-xl bg-[#eae8e8] border border-transparent shadow-sm pt-[3px] pb-1 px-[2px] flex flex-col items-center justify-start transition-colors"
+          : "w-full flex-1 rounded-xl bg-[#eae8e8] border border-[#dad8d8] group-hover:border-[#c8c5c5] shadow-xs pt-[3px] pb-1 px-[2px] flex flex-col items-center justify-start transition-colors";
       }
     }
 
@@ -4688,7 +4688,7 @@
       }
 
       container.style.gridTemplateColumns = `80px repeat(${laneCount}, minmax(0, 1fr))`;
-      container.style.columnGap = laneCount >= 7 ? "3px" : "4px";
+      container.style.columnGap = laneCount >= 7 ? "2px" : "4px";
       container.style.rowGap = "6px";
       container.style.gridAutoRows = "26px 48px";
 
@@ -4778,7 +4778,7 @@
         strip.innerHTML = `
           <span data-strip-cust>${custShort ? escapeHtml(custShort) : "&nbsp;"}</span>
           <div data-strip-body>
-            <div class="inline-flex flex-col items-center justify-center min-w-[22px] max-w-full px-1 py-1 rounded-xl bg-white text-[#b80000] shadow-xs tabular-nums">
+            <div class="w-full flex flex-col items-center justify-center px-0.5 py-1 rounded-[10px] bg-white text-[#b80000] shadow-xs tabular-nums">
               <span class="text-xs font-bold leading-none">${actualLabel}</span>
               <span aria-hidden="true" class="w-4 h-[1px] bg-[#dad8d8] my-[2px]"></span>
               <span class="text-xs font-bold leading-none">${plannedLabel}</span>
