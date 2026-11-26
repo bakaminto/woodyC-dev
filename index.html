@@ -458,14 +458,29 @@
     </div>
   </div>
 
-  <!-- Modal 3: Rename Device -->
+  <!-- Modal 3: Rename Device / Add or Edit Customer -->
   <div id="renameModal"
     class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="bg-white rounded-2xl p-5 w-full max-w-xs shadow-xl flex flex-col gap-3">
       <h3 class="text-sm font-bold" id="renameModalTitle">Rename Device:</h3>
-      <input type="text" id="inputRename" placeholder="New label (e.g. XX01)"
-        class="w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none font-code">
-      <p id="renameHint" class="text-[11px] text-[#916f69] -mt-1">Only letters, numbers, and underscores.</p>
+      <div class="flex flex-col gap-1">
+        <label id="renameNameLabel" for="inputRename" class="text-[11px] font-semibold text-[#5d403b]">Device Label</label>
+        <input type="text" id="inputRename" placeholder="New label (e.g. XX01)"
+          autocorrect="off" spellcheck="false" enterkeyhint="done"
+          aria-describedby="renameHint" aria-invalid="false"
+          class="w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none font-code">
+      </div>
+      <div id="customerShortLabelGroup" class="hidden">
+        <div class="flex flex-col gap-1">
+          <label for="inputCustomerShortLabel" class="text-[11px] font-semibold text-[#5d403b]">Short Label (max 3 chars, optional)</label>
+          <input type="text" id="inputCustomerShortLabel" maxlength="3" placeholder="Auto (first 3 chars)"
+            autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done"
+            aria-describedby="customerShortLabelHint renameHint" aria-invalid="false"
+            class="w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none font-code uppercase">
+          <span id="customerShortLabelHint" class="text-[11px] text-[#916f69]">Leave blank to auto-fill from the first 3 characters on save.</span>
+        </div>
+      </div>
+      <p id="renameHint" aria-live="polite" class="text-[11px] text-[#916f69] -mt-1">Only letters, numbers, and underscores.</p>
       <div class="flex items-center justify-end gap-2 pt-2">
         <button type="button" onclick="closeRenameModal()"
           class="px-3 py-1.5 text-xs font-semibold text-[#5d403b] cursor-pointer">Cancel</button>
@@ -566,7 +581,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C01.8";
+    const APP_VERSION = "C01.9";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -627,6 +642,59 @@
       const cust = findCustomerById(store, ev.customer_id);
       if (cust && (cust.name || "").trim()) return cust.name.trim();
       return (ev.customer || "").trim();
+    }
+
+    function normalizeCustomerShortLabel(val) {
+      return String(val || "").trim().slice(0, 3).trim().toUpperCase();
+    }
+
+    function resolveUniqueCustomerShortLabel(customers, name, desiredShort = "", excludeCustId = null) {
+      const used = new Set();
+      (customers || []).forEach(c => {
+        if (!c || c.id === excludeCustId) return;
+        if ((c.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME) return;
+        const normalized = normalizeCustomerShortLabel(c.short_label);
+        if (normalized) used.add(normalized);
+      });
+
+      const custom = normalizeCustomerShortLabel(desiredShort);
+      if (custom) {
+        if (!used.has(custom)) return custom;
+        for (let n = 1; n <= 999; n++) {
+          const suffix = String(n);
+          const prefixLen = n <= 9
+            ? Math.max(0, Math.min(2, custom.length - 1))
+            : Math.max(0, 3 - suffix.length);
+          const candidate = `${custom.slice(0, prefixLen)}${suffix}`;
+          if (!used.has(candidate)) return candidate;
+        }
+        return custom;
+      }
+
+      const base = normalizeCustomerShortLabel(name);
+      if (base && !used.has(base)) return base;
+
+      for (let n = 1; n <= 999; n++) {
+        const suffix = String(n);
+        const prefixLen = n <= 9
+          ? Math.max(0, Math.min(2, base.length - 1))
+          : Math.max(0, 3 - suffix.length);
+        const candidate = `${base.slice(0, prefixLen)}${suffix}`;
+        if (!used.has(candidate)) return candidate;
+      }
+      return base || "1";
+    }
+
+    function getEventCustomerShortLabel(store, ev) {
+      if (!ev) return "";
+      const cust = findCustomerById(store, ev.customer_id) || findCustomerByName(store, ev.customer);
+      if (cust) {
+        const stored = normalizeCustomerShortLabel(cust.short_label);
+        if (stored) return stored;
+      }
+      const fallbackName = getEventCustomerName(store, ev);
+      if (!fallbackName) return "";
+      return resolveUniqueCustomerShortLabel(store ? store.customers : [], fallbackName, "", cust ? cust.id : null);
     }
 
     function formatTwoDigits(n) {
@@ -813,6 +881,23 @@
       if (!Array.isArray(data.events)) data.events = [];
       if (!Array.isArray(data.bookings)) data.bookings = [];
 
+      // Preserve unique custom short_labels first, then backfill missing/colliding ones uniquely
+      const usedShortLabels = new Set();
+      data.customers.forEach(c => {
+        const rawShort = normalizeCustomerShortLabel(c.short_label);
+        if (rawShort && !usedShortLabels.has(rawShort)) {
+          c.short_label = rawShort;
+          usedShortLabels.add(rawShort);
+        } else {
+          c.short_label = "";
+        }
+      });
+      data.customers.forEach(c => {
+        if (!c.short_label) {
+          c.short_label = resolveUniqueCustomerShortLabel(data.customers, c.name, "", c.id);
+        }
+      });
+
       let custMigSeq = 0;
       const ensureCustomerLink = (custId, custName) => {
         const existingById = findCustomerById(data, custId);
@@ -825,6 +910,7 @@
         const created = {
           id: `cust_mig_${Date.now()}_${custMigSeq}`,
           name: cleanName,
+          short_label: resolveUniqueCustomerShortLabel(data.customers, cleanName),
           is_active: true
         };
         data.customers.push(created);
@@ -1003,8 +1089,10 @@
       const hadRaw = Boolean(raw);
       const hadBookings = Array.isArray(data.bookings);
       const hadEvents = Array.isArray(data.events);
+      const hadCustomerShortLabels = Array.isArray(data.customers) &&
+        data.customers.every(c => c && typeof c.short_label === "string" && c.short_label.trim().length > 0);
       ensureEmptySlotBuffer(data);
-      if (hadRaw && (!hadBookings || !hadEvents)) {
+      if (hadRaw && (!hadBookings || !hadEvents || !hadCustomerShortLabels)) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       }
       return data;
@@ -2477,6 +2565,9 @@
       customers.forEach(cust => {
         const isPlaceholder = (cust.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME;
         const isActive = Boolean(cust.is_active);
+        const shortLabel = isPlaceholder
+          ? ""
+          : (normalizeCustomerShortLabel(cust.short_label) || resolveUniqueCustomerShortLabel(setupWorkingStore.customers, cust.name, "", cust.id));
 
         const card = document.createElement("div");
         card.id = `setup_cust_${cust.id}`;
@@ -2485,10 +2576,17 @@
         const nameColorClass = isPlaceholder
           ? "text-[#b80000] italic"
           : (isActive ? "text-[#1b1c1c]" : "text-[#9e9e9e]");
+        const shortBadgeClass = isActive
+          ? "bg-[#efeded] text-[#5d403b]"
+          : "bg-[#f5f3f3] text-[#9e9e9e]";
+        const shortBadgeHtml = shortLabel
+          ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded ${shortBadgeClass} text-[11px] font-bold font-code tracking-wider shrink-0">${escapeHtml(shortLabel)}</span>`
+          : "";
 
         card.innerHTML = `
-          <button type="button" onclick="openCustomerRenameModal('${cust.id}')" class="text-sm font-semibold ${nameColorClass} text-left hover:underline cursor-pointer truncate min-w-0 flex-1">
-            ${escapeHtml(cust.name)}
+          <button type="button" onclick="openCustomerRenameModal('${cust.id}')" class="flex items-center gap-2 min-w-0 flex-1 text-left group cursor-pointer">
+            <span class="text-sm font-semibold ${nameColorClass} group-hover:underline truncate">${escapeHtml(cust.name)}</span>
+            ${shortBadgeHtml}
           </button>
           <label class="relative inline-flex items-center cursor-pointer shrink-0">
             <input type="checkbox" ${isActive ? "checked" : ""} class="sr-only peer" onchange="handleSetupCustomerActiveToggle('${cust.id}', this.checked)">
@@ -2522,6 +2620,7 @@
       setupWorkingStore.customers.push({
         id: newCustId,
         name: CUSTOMER_PLACEHOLDER_NAME,
+        short_label: "",
         is_active: true
       });
 
@@ -2727,9 +2826,16 @@
       activeRenameCustomerId = null;
       const dev = setupWorkingStore.devices.find(d => d.id === devId);
       document.getElementById("renameModalTitle").textContent = `Rename Device (${dev ? dev.label : devId})`;
+      document.getElementById("renameNameLabel").textContent = "Device Label";
+      document.getElementById("customerShortLabelGroup").classList.add("hidden");
+      const shortInput = document.getElementById("inputCustomerShortLabel");
+      shortInput.value = "";
+      shortInput.placeholder = "Auto (first 3 chars)";
+      shortInput.setAttribute("aria-invalid", "false");
       const input = document.getElementById("inputRename");
       input.placeholder = "New label (e.g. XX01)";
       input.className = "w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none font-code";
+      input.setAttribute("aria-invalid", "false");
       input.value = dev ? dev.label : "";
       document.getElementById("btnConfirmRename").textContent = "Rename";
       validateRenameInput();
@@ -2744,12 +2850,18 @@
       activeRenameDeviceId = null;
       const cust = (setupWorkingStore.customers || []).find(c => c.id === custId);
       const isPlaceholder = cust && (cust.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME;
-      document.getElementById("renameModalTitle").textContent = isPlaceholder ? "Add Customer" : "Rename Customer";
+      document.getElementById("renameModalTitle").textContent = isPlaceholder ? "Add Customer" : "Edit Customer";
+      document.getElementById("renameNameLabel").textContent = "Customer Name";
+      document.getElementById("customerShortLabelGroup").classList.remove("hidden");
       const input = document.getElementById("inputRename");
       input.placeholder = "Customer name";
       input.className = "w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none";
+      input.setAttribute("aria-invalid", "false");
       input.value = (cust && !isPlaceholder) ? cust.name : "";
-      document.getElementById("btnConfirmRename").textContent = isPlaceholder ? "Apply" : "Rename";
+      const shortInput = document.getElementById("inputCustomerShortLabel");
+      shortInput.value = (!isPlaceholder && cust) ? normalizeCustomerShortLabel(cust.short_label) : "";
+      shortInput.setAttribute("aria-invalid", "false");
+      document.getElementById("btnConfirmRename").textContent = isPlaceholder ? "Apply" : "Save";
       validateRenameInput();
       document.getElementById("renameModal").classList.remove("hidden");
       setScrollLock(true);
@@ -2758,6 +2870,9 @@
 
     function closeRenameModal() {
       document.getElementById("renameModal").classList.add("hidden");
+      document.getElementById("customerShortLabelGroup").classList.add("hidden");
+      document.getElementById("inputRename").setAttribute("aria-invalid", "false");
+      document.getElementById("inputCustomerShortLabel").setAttribute("aria-invalid", "false");
       setScrollLock(false);
       activeRenameDeviceId = null;
       activeRenameCustomerId = null;
@@ -2765,24 +2880,55 @@
 
     function validateRenameInput() {
       const input = document.getElementById("inputRename");
+      const shortInput = document.getElementById("inputCustomerShortLabel");
+      const shortHint = document.getElementById("customerShortLabelHint");
       const btn = document.getElementById("btnConfirmRename");
       const hint = document.getElementById("renameHint");
       const val = input.value.trim();
 
       if (activeRenameMode === "customer") {
         const currentCust = (setupWorkingStore.customers || []).find(c => c.id === activeRenameCustomerId);
+        const isPlaceholder = !currentCust || (currentCust.name || "").trim() === CUSTOMER_PLACEHOLDER_NAME;
+        const customShort = normalizeCustomerShortLabel(shortInput.value);
+        const autoPreview = val
+          ? resolveUniqueCustomerShortLabel(setupWorkingStore.customers || [], val, "", activeRenameCustomerId)
+          : "";
+
+        shortInput.placeholder = autoPreview ? `Auto (${autoPreview})` : "Auto (first 3 chars)";
+        if (shortHint) {
+          shortHint.textContent = autoPreview
+            ? `Leave blank to auto-fill "${autoPreview}" on save.`
+            : "Leave blank to auto-fill from the first 3 characters on save.";
+        }
+
+        const setInputErrorState = (hasNameErr, hasShortErr) => {
+          input.setAttribute("aria-invalid", hasNameErr ? "true" : "false");
+          input.className = hasNameErr
+            ? "w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none ring-1 ring-[#b80000]"
+            : "w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none";
+          shortInput.setAttribute("aria-invalid", hasShortErr ? "true" : "false");
+          shortInput.className = hasShortErr
+            ? "w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none font-code uppercase ring-1 ring-[#b80000]"
+            : "w-full h-11 bg-[#f5f3f3] text-sm px-3 rounded-lg focus:outline-none font-code uppercase";
+        };
 
         if (!val) {
           btn.disabled = true;
           btn.className = "px-4 py-1.5 bg-[#efeded] text-[#5d403b]/40 text-xs font-bold rounded-lg cursor-not-allowed";
-          hint.textContent = "Customer name cannot be empty.";
-          hint.className = "text-[11px] text-[#b80000] -mt-1";
+          setInputErrorState(!isPlaceholder, false);
+          hint.textContent = isPlaceholder
+            ? "Enter customer name and optional 3-char short label."
+            : "Customer name cannot be empty.";
+          hint.className = isPlaceholder
+            ? "text-[11px] text-[#916f69] -mt-1"
+            : "text-[11px] text-[#b80000] -mt-1";
           return;
         }
 
         if (val === CUSTOMER_PLACEHOLDER_NAME) {
           btn.disabled = true;
           btn.className = "px-4 py-1.5 bg-[#efeded] text-[#5d403b]/40 text-xs font-bold rounded-lg cursor-not-allowed";
+          setInputErrorState(true, false);
           hint.textContent = "Please enter an actual customer name.";
           hint.className = "text-[11px] text-[#b80000] -mt-1";
           return;
@@ -2794,22 +2940,44 @@
         if (duplicateCust) {
           btn.disabled = true;
           btn.className = "px-4 py-1.5 bg-[#efeded] text-[#5d403b]/40 text-xs font-bold rounded-lg cursor-not-allowed";
+          setInputErrorState(true, false);
           hint.textContent = `"${val}" already exists.`;
           hint.className = "text-[11px] text-[#b80000] -mt-1";
           return;
         }
 
-        if (currentCust && currentCust.name.trim() === val) {
+        const duplicateShortCust = customShort
+          ? (setupWorkingStore.customers || []).find(
+              c => c.id !== activeRenameCustomerId &&
+                (c.name || "").trim() !== CUSTOMER_PLACEHOLDER_NAME &&
+                normalizeCustomerShortLabel(c.short_label) === customShort
+            )
+          : null;
+        if (duplicateShortCust) {
           btn.disabled = true;
           btn.className = "px-4 py-1.5 bg-[#efeded] text-[#5d403b]/40 text-xs font-bold rounded-lg cursor-not-allowed";
-          hint.textContent = "Current customer name.";
+          setInputErrorState(false, true);
+          hint.textContent = `Short label "${customShort}" is already used by "${duplicateShortCust.name}".`;
+          hint.className = "text-[11px] text-[#b80000] -mt-1";
+          return;
+        }
+
+        setInputErrorState(false, false);
+        const effectiveShort = customShort || autoPreview;
+        const currentShort = currentCust ? normalizeCustomerShortLabel(currentCust.short_label) : "";
+        if (!isPlaceholder && currentCust && currentCust.name.trim() === val && currentShort === effectiveShort) {
+          btn.disabled = true;
+          btn.className = "px-4 py-1.5 bg-[#efeded] text-[#5d403b]/40 text-xs font-bold rounded-lg cursor-not-allowed";
+          hint.textContent = "No changes to save.";
           hint.className = "text-[11px] text-[#916f69] -mt-1";
           return;
         }
 
         btn.disabled = false;
         btn.className = "px-4 py-1.5 bg-[#b80000] hover:bg-[#8b0000] text-white text-xs font-bold rounded-lg cursor-pointer transition-colors";
-        hint.textContent = "Valid customer name.";
+        hint.textContent = customShort
+          ? `Valid customer (${effectiveShort}).`
+          : `Valid customer — auto short label: "${effectiveShort}".`;
         hint.className = "text-[11px] text-[#2e7d32] -mt-1";
         return;
       }
@@ -2857,7 +3025,14 @@
 
     document.getElementById("inputRename").addEventListener("input", validateRenameInput);
     document.getElementById("inputRename").addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !document.getElementById("btnConfirmRename").disabled) {
+      if (!e.isComposing && e.key === "Enter" && !document.getElementById("btnConfirmRename").disabled) {
+        e.preventDefault();
+        confirmRenameAction();
+      }
+    });
+    document.getElementById("inputCustomerShortLabel").addEventListener("input", validateRenameInput);
+    document.getElementById("inputCustomerShortLabel").addEventListener("keydown", (e) => {
+      if (!e.isComposing && e.key === "Enter" && !document.getElementById("btnConfirmRename").disabled) {
         e.preventDefault();
         confirmRenameAction();
       }
@@ -2873,10 +3048,23 @@
         );
         if (duplicateCust) return;
 
+        const desiredShort = normalizeCustomerShortLabel(document.getElementById("inputCustomerShortLabel").value);
+        if (desiredShort) {
+          const duplicateShort = (setupWorkingStore.customers || []).some(
+            c => c.id !== activeRenameCustomerId &&
+              (c.name || "").trim() !== CUSTOMER_PLACEHOLDER_NAME &&
+              normalizeCustomerShortLabel(c.short_label) === desiredShort
+          );
+          if (duplicateShort) return;
+        }
+
         if (activeRenameCustomerId) {
           const cust = (setupWorkingStore.customers || []).find(c => c.id === activeRenameCustomerId);
           if (cust) {
             cust.name = newVal;
+            cust.short_label = desiredShort
+              ? desiredShort
+              : resolveUniqueCustomerShortLabel(setupWorkingStore.customers, newVal, "", activeRenameCustomerId);
             if (Array.isArray(setupWorkingStore.events)) {
               setupWorkingStore.events.forEach(ev => {
                 if (ev.customer_id === cust.id) {
@@ -4388,7 +4576,7 @@
 
       const custEl = strip.querySelector("[data-strip-cust]");
       if (custEl) {
-        custEl.className = `w-full px-0.5 text-[10px] font-bold uppercase tracking-wide leading-[11px] mb-[3px] truncate text-center ${isSelected ? "text-white" : "text-[#5d403b]"}`;
+        custEl.className = `w-full px-0.5 text-[10px] font-bold uppercase tracking-wider leading-[11px] mb-[3px] truncate text-center ${isSelected ? "text-white" : "text-[#5d403b]"}`;
       }
 
       const bodyEl = strip.querySelector("[data-strip-body]");
@@ -4536,7 +4724,7 @@
         const plannedLabel = formatTwoDigits(plannedCount);
         const isSelectedEvent = calendarSelectedEventId === ev.id;
         const custName = getEventCustomerName(globalStore, ev);
-        const custShort = custName ? custName.trim().slice(0, 4) : "";
+        const custShort = getEventCustomerShortLabel(globalStore, ev);
         const titleLabel = custName ? `${custName} • ${ev.name}` : ev.name;
 
         const strip = document.createElement("button");
