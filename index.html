@@ -358,23 +358,23 @@
 
   </main>
 
-  <!-- ==================== SHARED FIXED BOTTOM FOOTER (DAYS + EVENTS) ==================== -->
+  <!-- ==================== SHARED FIXED BOTTOM FOOTER (EVENTS + DAYS) ==================== -->
   <footer id="appBottomFooter"
     class="fixed bottom-0 inset-x-0 z-40 bg-[#fbf9f9] border-t border-[#e9e8e7] px-3 pt-1 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] shadow-lg select-none">
     <div class="max-w-md mx-auto flex flex-col gap-1.5">
-      <!-- Row 1 (Grid & List): Horizontal Day Carousel -->
+      <!-- Top Row (Grid) / Single Row (Calendar): Horizontal Event Carousel -->
+      <div id="calendarFooter">
+        <div id="calendarEventsTrack" role="region" aria-label="Events timeline"
+          class="relative h-[88px] flex items-center gap-2.5 overflow-x-auto no-scrollbar px-0.5"></div>
+      </div>
+
+      <!-- Bottom Row (Grid & List): Horizontal Day Carousel -->
       <div id="timelineFooter" class="hidden">
         <div id="timelineFooterInner">
           <!-- Scrollable center-snapped day badges matching Calendar event badge frame -->
           <div id="timelineDaysContainer" tabindex="0" role="region" aria-label="Date timeline"
             class="relative h-[88px] flex items-center gap-0.5 overflow-x-auto no-scrollbar snap-x snap-mandatory focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b80000] rounded-xl"></div>
         </div>
-      </div>
-
-      <!-- Row 2 (Grid & Calendar): Horizontal Event Carousel -->
-      <div id="calendarFooter">
-        <div id="calendarEventsTrack" role="region" aria-label="Events timeline"
-          class="relative h-[88px] flex items-center gap-2.5 overflow-x-auto no-scrollbar px-0.5"></div>
       </div>
     </div>
   </footer>
@@ -589,7 +589,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C02.3";
+    const APP_VERSION = "C02.4";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -1162,7 +1162,7 @@
       const prevView = currentView;
       currentView = viewName;
 
-      // Handle footer visibility: Days (Grid/List) + Events (Grid/Calendar), hidden on Detail/Setup
+      // Handle footer visibility: Events (Grid/Calendar) + Days (Grid/List), hidden on Detail/Setup
       const appBottomFooter = document.getElementById("appBottomFooter");
       const timelineFooter = document.getElementById("timelineFooter");
       const timelineFooterInner = document.getElementById("timelineFooterInner");
@@ -1171,20 +1171,19 @@
       if (appBottomFooter) {
         appBottomFooter.classList.toggle("hidden", !showBottomFooter);
       }
-      if (timelineFooter) {
-        if (viewName === "grid" || viewName === "list") {
-          timelineFooter.classList.remove("hidden");
-          if (timelineFooterInner) timelineFooterInner.classList.remove("invisible", "pointer-events-none");
-        } else {
-          timelineFooter.classList.add("hidden");
-        }
-      }
       if (calendarFooter) {
         const showEventsRow = (viewName === "grid" || viewName === "calendar");
         calendarFooter.classList.toggle("hidden", !showEventsRow);
-        calendarFooter.classList.toggle("border-t", viewName === "grid");
-        calendarFooter.classList.toggle("border-[#e9e8e7]", viewName === "grid");
-        calendarFooter.classList.toggle("pt-1.5", viewName === "grid");
+      }
+      if (timelineFooter) {
+        const showDaysRow = (viewName === "grid" || viewName === "list");
+        timelineFooter.classList.toggle("hidden", !showDaysRow);
+        timelineFooter.classList.toggle("border-t", viewName === "grid");
+        timelineFooter.classList.toggle("border-[#e9e8e7]", viewName === "grid");
+        timelineFooter.classList.toggle("pt-1.5", viewName === "grid");
+        if (showDaysRow && timelineFooterInner) {
+          timelineFooterInner.classList.remove("invisible", "pointer-events-none");
+        }
       }
 
       ["viewGrid", "viewList", "viewCalendar", "viewDetail", "viewSetup"].forEach(id => {
