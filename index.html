@@ -363,9 +363,21 @@
     class="fixed bottom-0 inset-x-0 z-40 bg-[#fbf9f9] border-t border-[#e9e8e7] px-3 pt-1 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] shadow-lg select-none">
     <div class="max-w-md mx-auto flex flex-col gap-1.5">
       <!-- Top Row (Grid) / Single Row (Calendar): Horizontal Event Carousel -->
-      <div id="calendarFooter">
+      <div id="calendarFooter" class="relative">
         <div id="calendarEventsTrack" role="region" aria-label="Events timeline"
           class="relative h-[88px] flex items-center gap-2.5 overflow-x-auto no-scrollbar px-0.5"></div>
+        <div id="calendarEventsHintLeft" aria-hidden="true"
+          class="pointer-events-none opacity-0 transition-opacity duration-150 absolute inset-y-0 left-0 z-20 flex items-center pl-0.5 pr-3 bg-gradient-to-r from-[#fbf9f9] via-[#fbf9f9]/85 to-transparent">
+          <span class="w-6 h-7 rounded-full bg-white/95 border border-[#cfcdcc] shadow-sm flex items-center justify-center text-[#5d403b]">
+            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" /></svg>
+          </span>
+        </div>
+        <div id="calendarEventsHintRight" aria-hidden="true"
+          class="pointer-events-none opacity-0 transition-opacity duration-150 absolute inset-y-0 right-0 z-20 flex items-center pr-0.5 pl-3 bg-gradient-to-l from-[#fbf9f9] via-[#fbf9f9]/85 to-transparent">
+          <span class="w-6 h-7 rounded-full bg-white/95 border border-[#cfcdcc] shadow-sm flex items-center justify-center text-[#5d403b]">
+            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8.59 16.59 10 18l6-6-6-6-1.41 1.41L13.17 12z" /></svg>
+          </span>
+        </div>
       </div>
 
       <!-- Bottom Row (Grid & List): Horizontal Day Carousel -->
@@ -589,7 +601,7 @@
         the offline cache.
       ======================================================================
     */
-    const APP_VERSION = "C02.4";
+    const APP_VERSION = "C02.5";
     <!-- antigravity sync test -->
 
     const CUSTOMER_PLACEHOLDER_NAME = "<change customer name>";
@@ -3979,6 +3991,7 @@
           ? `No events on ${formatShortMmDd(calendarSelectedDateKey)}`
           : "No events scheduled";
         track.innerHTML = `<div class="w-full text-center text-xs text-[#916f69] font-medium">${emptyText}</div>`;
+        updateCalendarEventsScrollHints();
         return;
       }
 
@@ -4079,6 +4092,52 @@
         }
       } else if (typeof track.scrollLeft === "number") {
         track.scrollLeft = prevScrollLeft;
+      }
+      updateCalendarEventsScrollHints();
+      requestAnimationFrame(updateCalendarEventsScrollHints);
+    }
+
+    let calendarEventsHintRaf = null;
+
+    function updateCalendarEventsScrollHints() {
+      const track = document.getElementById("calendarEventsTrack");
+      const leftHint = document.getElementById("calendarEventsHintLeft");
+      const rightHint = document.getElementById("calendarEventsHintRight");
+      if (!track || !leftHint || !rightHint) return;
+
+      const clientW = track.clientWidth || 0;
+      const scrollW = track.scrollWidth || 0;
+      const scrollL = track.scrollLeft || 0;
+      const threshold = 3;
+
+      const canScrollLeft = clientW > 0 && scrollW > clientW + threshold && scrollL > threshold;
+      const canScrollRight = clientW > 0 && scrollW > clientW + threshold && (scrollL + clientW) < (scrollW - threshold);
+
+      leftHint.classList.toggle("opacity-100", canScrollLeft);
+      leftHint.classList.toggle("opacity-0", !canScrollLeft);
+      rightHint.classList.toggle("opacity-100", canScrollRight);
+      rightHint.classList.toggle("opacity-0", !canScrollRight);
+    }
+
+    function scheduleCalendarEventsScrollHints() {
+      if (calendarEventsHintRaf) return;
+      calendarEventsHintRaf = requestAnimationFrame(() => {
+        calendarEventsHintRaf = null;
+        updateCalendarEventsScrollHints();
+      });
+    }
+
+    function setupCalendarEventsHintListeners() {
+      const track = document.getElementById("calendarEventsTrack");
+      if (!track) return;
+      track.addEventListener("scroll", scheduleCalendarEventsScrollHints, { passive: true });
+      if ("onscrollend" in window) {
+        track.addEventListener("scrollend", updateCalendarEventsScrollHints, { passive: true });
+      }
+      window.addEventListener("resize", scheduleCalendarEventsScrollHints, { passive: true });
+      if (typeof ResizeObserver === "function") {
+        const ro = new ResizeObserver(scheduleCalendarEventsScrollHints);
+        ro.observe(track);
       }
     }
 
@@ -5060,6 +5119,7 @@
     // Startup Initialization
     setupCalendarScrollListener();
     setupTimelineScrollListener();
+    setupCalendarEventsHintListeners();
     updateTimelineFooter();
     switchView("calendar");
 
